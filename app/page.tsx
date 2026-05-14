@@ -14,18 +14,39 @@ type Card = {
   img_sealed: string | null
   img_awake: string | null
   img: string | null
+  max_in_deck: number | null
 }
 
 export default async function Home() {
   const { data: cards } = await supabase.from('cards').select('*')
 
   return (
-    <main className="min-h-screen bg-gray-900 p-8">
-      <h1 className="text-3xl font-bold text-yellow-400 mb-8 text-center">AWAKE</h1>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
-        {cards?.map((card: Card) => (
-          <CardItem key={card.id} card={card} />
-        ))}
+    <main className="min-h-screen p-8" style={{ background: '#0f0f0f' }}>
+      <div className="max-w-5xl mx-auto">
+        <div className="text-center mb-10">
+          <h1
+            className="text-5xl font-bold mb-2"
+            style={{
+              color: '#e8c876',
+              fontFamily: 'Georgia, serif',
+              letterSpacing: '0.3em'
+            }}
+          >
+            AWAKE
+          </h1>
+          <div
+            className="h-0.5 w-48 mx-auto"
+            style={{ background: 'linear-gradient(90deg, transparent, #5c3a00, transparent)' }}
+          />
+          <p className="text-xs mt-2" style={{ color: '#666', letterSpacing: '0.2em' }}>
+            カード一覧
+          </p>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+          {cards?.map((card: Card) => (
+            <CardItem key={card.id} card={card} />
+          ))}
+        </div>
       </div>
     </main>
   )
