@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import CardItem from './components/CardItem'
 
 type Card = {
   id: string
@@ -23,22 +24,7 @@ export default async function Home() {
       <h1 className="text-3xl font-bold text-yellow-400 mb-8 text-center">AWAKE</h1>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
         {cards?.map((card: Card) => (
-          <div key={card.id} className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
-            <img
-              src={card.type === 'monster' ? (card.img_sealed ?? '') : (card.img ?? '')}
-              alt={card.name}
-              className="w-full aspect-video object-cover"
-            />
-            <div className="p-2">
-              <p className="text-white text-sm font-bold">{card.name}</p>
-              {card.type === 'monster' && (
-                <p className="text-gray-400 text-xs">ATK {card.atk_sealed} / DEF {card.def_sealed}</p>
-              )}
-              {card.type !== 'monster' && (
-                <p className="text-gray-400 text-xs">{card.effect}</p>
-              )}
-            </div>
-          </div>
+          <CardItem key={card.id} card={card} />
         ))}
       </div>
     </main>
