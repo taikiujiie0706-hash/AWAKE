@@ -16,6 +16,7 @@ type Card = {
   img_awake: string | null
   img: string | null
   max_in_deck: number | null
+  attribute: string | null
 }
 
 export default async function Home() {
