@@ -16,17 +16,28 @@ type Card = {
   img_awake: string | null
   img: string | null
   max_in_deck: number | null
+  attribute: string | null
+}
+
+const attributeColor: Record<string, string> = {
+  '火': 'rgba(220,60,40,0.9)',
+  '水': 'rgba(40,100,220,0.9)',
+  '風': 'rgba(40,160,80,0.9)',
+  '地': 'rgba(40,40,40,0.9)',
+  '闇': 'rgba(100,40,180,0.9)',
+  '光': 'rgba(200,180,40,0.9)',
 }
 
 export default function CardItem({ card }: { card: Card }) {
   const [isAwake, setIsAwake] = useState(false)
 
   const isMonster = card.type === 'monster'
+  const hasAwake = !!card.img_awake
 
   return (
     <div
       className="relative rounded-lg overflow-hidden cursor-pointer group"
-      onClick={() => isMonster && setIsAwake(!isAwake)}
+      onClick={() => isMonster && hasAwake && setIsAwake(!isAwake)}
       style={{
         border: isAwake
           ? '2px solid rgba(180,100,255,0.8)'
@@ -38,16 +49,14 @@ export default function CardItem({ card }: { card: Card }) {
         transition: 'all 0.3s ease'
       }}
     >
-      {/* カード画像 */}
       <div className="relative overflow-hidden aspect-[4/3]">
         <img
           src={isMonster
-            ? (isAwake ? (card.img_awake ?? '') : (card.img_sealed ?? ''))
+            ? (isAwake ? (card.img_awake ?? card.img_sealed ?? '') : (card.img_sealed ?? card.img ?? ''))
             : (card.img ?? '')}
           alt={card.name}
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
-        {/* 画像オーバーレイ */}
         <div
           className="absolute inset-0"
           style={{
@@ -57,7 +66,22 @@ export default function CardItem({ card }: { card: Card }) {
           }}
         />
 
-        {/* タイプバッジ */}
+        {/* 属性バッジ（左上） */}
+        {card.attribute && (
+          <div
+            className="absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full font-bold"
+            style={{
+              background: attributeColor[card.attribute] ?? 'rgba(80,80,80,0.9)',
+              color: '#fff',
+              fontSize: '0.55rem',
+              letterSpacing: '0.05em'
+            }}
+          >
+            {card.attribute}
+          </div>
+        )}
+
+        {/* タイプバッジ（右上） */}
         <div
           className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full font-bold"
           style={{
@@ -73,7 +97,6 @@ export default function CardItem({ card }: { card: Card }) {
         </div>
       </div>
 
-      {/* カード情報 */}
       <div className="p-2" style={{ background: 'rgba(10,5,0,0.9)' }}>
         <p
           className="font-bold text-sm truncate"
@@ -103,13 +126,19 @@ export default function CardItem({ card }: { card: Card }) {
           </p>
         )}
 
+        {isMonster && !isAwake && card.effect && (
+          <p className="text-xs mt-1 leading-relaxed" style={{ color: '#a0a0ff' }}>
+            {card.effect}
+          </p>
+        )}
+
         {!isMonster && (
           <p className="text-xs mt-1 leading-relaxed" style={{ color: '#90c890' }}>
             {card.effect}
           </p>
         )}
 
-        {isMonster && (
+        {isMonster && hasAwake && (
           <p className="text-xs mt-1 text-right" style={{ color: '#5c3a00' }}>
             {isAwake ? '' : 'タップで覚醒'}
           </p>
