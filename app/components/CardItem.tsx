@@ -5,6 +5,7 @@ import { useState } from 'react'
 type Card = {
   id: string
   name: string
+  name_awake: string | null
   type: string
   atk_sealed: number | null
   def_sealed: number | null
@@ -33,6 +34,7 @@ export default function CardItem({ card }: { card: Card }) {
 
   const isMonster = card.type === 'monster'
   const hasAwake = !!card.img_awake
+  const displayName = isAwake && card.name_awake ? card.name_awake : card.name
 
   return (
     <div
@@ -54,7 +56,7 @@ export default function CardItem({ card }: { card: Card }) {
           src={isMonster
             ? (isAwake ? (card.img_awake ?? card.img_sealed ?? '') : (card.img_sealed ?? card.img ?? ''))
             : (card.img ?? '')}
-          alt={card.name}
+          alt={displayName}
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
         <div
@@ -66,7 +68,6 @@ export default function CardItem({ card }: { card: Card }) {
           }}
         />
 
-        {/* 属性バッジ（左上） */}
         {card.attribute && (
           <div
             className="absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full font-bold"
@@ -81,7 +82,6 @@ export default function CardItem({ card }: { card: Card }) {
           </div>
         )}
 
-        {/* タイプバッジ（右上） */}
         <div
           className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full font-bold"
           style={{
@@ -106,7 +106,7 @@ export default function CardItem({ card }: { card: Card }) {
             letterSpacing: '0.03em'
           }}
         >
-          {card.name}
+          {displayName}
         </p>
 
         {isMonster && (

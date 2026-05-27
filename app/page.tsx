@@ -5,6 +5,7 @@ import LogoutButton from './components/LogoutButton'
 type Card = {
   id: string
   name: string
+  name_awake: string | null
   type: string
   atk_sealed: number | null
   def_sealed: number | null
