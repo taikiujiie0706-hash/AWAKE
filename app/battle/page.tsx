@@ -950,8 +950,8 @@ export default function BattlePage() {
     if (!game?.pendingEffect) return
     if (game.pendingEffect.type !== 'coin_toss') return
     const g = { ...game }
+    if (!g.pendingEffect || g.pendingEffect.type !== 'coin_toss') return
     const effect = g.pendingEffect
-    if (!effect || effect.type !== 'coin_toss') return
     if (effect.graveIndex === -1) { setMessage('カードが選択されていません'); return }
     const result = Math.random() < 0.5
     const grave = effect.owner === 'my' ? g.myGrave : g.oppGrave
