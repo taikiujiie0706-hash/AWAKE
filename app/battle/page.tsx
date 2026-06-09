@@ -269,6 +269,11 @@ export default function BattlePage() {
   } | null>(null)
   const singariCheckedRef = useRef(false)
   const onlineSingariSlotRef = useRef(-1)
+  const [waitingForTrapResponse, setWaitingForTrapResponse] = useState(false)
+  const [opponentCheckingTrap, setOpponentCheckingTrap] = useState(false)
+  const [cardReveal, setCardReveal] = useState<{ data: CardData; owner: 'my' | 'opp' } | null>(null)
+  // GUEST がブロードキャストしてきたデッキ情報を HOST 側で保持するための ref
+  const guestDeckBroadcastRef = useRef<{ monster_cards: string[]; magic_trap_cards: string[] } | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
@@ -279,13 +284,17 @@ export default function BattlePage() {
       ])
       if (cardsRes.data) setAllCards(cardsRes.data)
       const user = sessionRes.data.session?.user
+      let myDeckData: { monster_cards: string[]; magic_trap_cards: string[] } | null = null
       if (user) {
         const { data: deck } = await supabase.from('decks')
           .select('monster_cards,magic_trap_cards')
           .eq('user_id', user.id)
           .order('updated_at', { ascending: false })
           .limit(1).maybeSingle()
-        if (deck) setMyDeckRecord(deck)
+        if (deck) {
+          myDeckData = deck as { monster_cards: string[]; magic_trap_cards: string[] }
+          setMyDeckRecord(deck)
+        }
       }
 
       // オンラインモード：URLパラメータを読む
@@ -337,11 +346,34 @@ export default function BattlePage() {
           onlineActionResolveRef.current?.(payload.activated)
           onlineActionResolveRef.current = null
         })
+        channel.on('broadcast', { event: 'trap_checking' }, ({ payload }: { payload: { active: boolean } }) => {
+          setOpponentCheckingTrap(payload.active)
+        })
+        channel.on('broadcast', { event: 'card_reveal' }, ({ payload }: { payload: { card: CardData } }) => {
+          showCardReveal(payload.card, 'opp')
+        })
         channel.on('broadcast', { event: 'battle_anim' }, ({ payload }: { payload: { info: { atkName: string; atkImg: string; atkVal: number; defName: string | null; defImg: string | null; defVal: number; defStance: 'attack' | 'defense'; damage: number; result: string; isPlayerAttack: boolean } } }) => {
           const info = { ...payload.info, isPlayerAttack: !payload.info.isPlayerAttack }
           setBattleDisplay(info)
           setTimeout(() => setBattleDisplay(null), 2000)
         })
+        // HOST 側: GUEST がブロードキャストしたデッキ情報を受信して保持
+        if (role === 'host') {
+          channel.on('broadcast', { event: 'guest_deck_info' }, ({ payload }: { payload: { deck: { monster_cards: string[]; magic_trap_cards: string[] } } }) => {
+            if (payload.deck) guestDeckBroadcastRef.current = payload.deck
+          })
+        }
+
+        // GUEST 側: HOST が presence に参加したら自分のデッキを送信
+        if (role === 'guest') {
+          channel.on('presence', { event: 'join' }, ({ newPresences }: { newPresences: { role?: string }[] }) => {
+            const hostJoined = newPresences.some(p => p.role === 'host')
+            if (hostJoined && myDeckData) {
+              channel.send({ type: 'broadcast', event: 'guest_deck_info', payload: { deck: myDeckData } })
+            }
+          })
+        }
+
         channel.subscribe(async (status: string) => {
           if (status === 'SUBSCRIBED') {
             await channel.track({ role, userId: user?.id ?? '' })
@@ -383,6 +415,7 @@ export default function BattlePage() {
       const singariSlot = game.mySpellZone.findIndex(fc => fc?.data.id === 'trap_singari_01')
       const hasMyMonsters = [...game.myFront, ...game.myBack].some(fc => fc !== null)
       if (singariSlot !== -1 && hasMyMonsters) {
+        channelRef.current?.send({ type: 'broadcast', event: 'trap_checking', payload: { active: true } })
         onlineSingariSlotRef.current = singariSlot
         setTrapPrompt({
           cardName: 'しんがり',
@@ -412,54 +445,35 @@ export default function BattlePage() {
     })
   }, [game])
 
-  function startGame(first: 'my' | 'opp' = 'my', oppDeckRecord?: { monster_cards: string[]; magic_trap_cards: string[] }) {
+  type DeckRecord = { monster_cards: string[]; magic_trap_cards: string[] }
+
+  function showCardReveal(data: CardData, owner: 'my' | 'opp') {
+    setCardReveal({ data, owner })
+    setTimeout(() => setCardReveal(null), 1900)
+  }
+
+  function buildPlayerDecks(deckRecord: DeckRecord | null | undefined, isOnline: boolean, cardMap: Map<string, CardData>): { monsterDeck: CardData[]; spellDeck: CardData[] } {
+    if (deckRecord && (deckRecord.monster_cards.length > 0 || deckRecord.magic_trap_cards.length > 0)) {
+      const monsterDeck = buildDeckFromIds(deckRecord.monster_cards, cardMap, 15)
+      const spellDeck = buildDeckFromIds(deckRecord.magic_trap_cards, cardMap, 15)
+      return { monsterDeck, spellDeck }
+    }
+    // デッキレコードが null/空 の場合: オンラインモードは全カードフォールバック禁止
+    if (isOnline) {
+      console.error('[AWAKE] deck record missing in online mode — using empty deck')
+      return { monsterDeck: [], spellDeck: [] }
+    }
+    const d = buildDecks(allCards)
+    return { monsterDeck: d.monsterDeck, spellDeck: d.spellDeck }
+  }
+
+  function startGame(first: 'my' | 'opp' = 'my', oppDeckRecord?: DeckRecord | null, myDeckOverride?: DeckRecord | null) {
     const cardMap = new Map(allCards.map(c => [c.id, c]))
-    let myMonsterDeck: CardData[]
-    let mySpellDeck2: CardData[]
-    // デッキレコードがある場合は登録カードのみ使用（全カードへのフォールバックなし）
-    if (myDeckRecord) {
-      myMonsterDeck = buildDeckFromIds(myDeckRecord.monster_cards, cardMap, 15)
-      mySpellDeck2 = buildDeckFromIds(myDeckRecord.magic_trap_cards, cardMap, 15)
-      // どちらかが空の場合、登録済みカード全体から補う（未登録カードは使わない）
-      if (myMonsterDeck.length === 0 || mySpellDeck2.length === 0) {
-        const allIds = [...myDeckRecord.monster_cards, ...myDeckRecord.magic_trap_cards]
-        const allRegistered = allIds.map(id => cardMap.get(id)).filter(Boolean) as CardData[]
-        if (myMonsterDeck.length === 0) {
-          const mons = allRegistered.filter(c => c.type === 'monster')
-          if (mons.length > 0) myMonsterDeck = buildDeckFromIds(myDeckRecord.monster_cards.length > 0 ? myDeckRecord.monster_cards : mons.map(c => c.id), cardMap, 15)
-        }
-        if (mySpellDeck2.length === 0) {
-          const spells = allRegistered.filter(c => c.type !== 'monster')
-          if (spells.length > 0) mySpellDeck2 = buildDeckFromIds(myDeckRecord.magic_trap_cards.length > 0 ? myDeckRecord.magic_trap_cards : spells.map(c => c.id), cardMap, 15)
-        }
-      }
-    } else {
-      const myDecks = buildDecks(allCards)
-      myMonsterDeck = myDecks.monsterDeck
-      mySpellDeck2 = myDecks.spellDeck
-    }
-    let oppMonsterDeck: CardData[]
-    let oppSpellDeck2: CardData[]
-    if (oppDeckRecord) {
-      oppMonsterDeck = buildDeckFromIds(oppDeckRecord.monster_cards, cardMap, 15)
-      oppSpellDeck2 = buildDeckFromIds(oppDeckRecord.magic_trap_cards, cardMap, 15)
-      if (oppMonsterDeck.length === 0 || oppSpellDeck2.length === 0) {
-        const allIds = [...oppDeckRecord.monster_cards, ...oppDeckRecord.magic_trap_cards]
-        const allRegistered = allIds.map(id => cardMap.get(id)).filter(Boolean) as CardData[]
-        if (oppMonsterDeck.length === 0) {
-          const mons = allRegistered.filter(c => c.type === 'monster')
-          if (mons.length > 0) oppMonsterDeck = buildDeckFromIds(oppDeckRecord.monster_cards.length > 0 ? oppDeckRecord.monster_cards : mons.map(c => c.id), cardMap, 15)
-        }
-        if (oppSpellDeck2.length === 0) {
-          const spells = allRegistered.filter(c => c.type !== 'monster')
-          if (spells.length > 0) oppSpellDeck2 = buildDeckFromIds(oppDeckRecord.magic_trap_cards.length > 0 ? oppDeckRecord.magic_trap_cards : spells.map(c => c.id), cardMap, 15)
-        }
-      }
-    } else {
-      const oppDecks = buildDecks(allCards)
-      oppMonsterDeck = oppDecks.monsterDeck
-      oppSpellDeck2 = oppDecks.spellDeck
-    }
+    const isOnline = !!onlineModeRef.current
+
+    const effectiveMyDeck = myDeckOverride ?? myDeckRecord
+    const { monsterDeck: myMonsterDeck, spellDeck: mySpellDeck2 } = buildPlayerDecks(effectiveMyDeck, isOnline, cardMap)
+    const { monsterDeck: oppMonsterDeck, spellDeck: oppSpellDeck2 } = buildPlayerDecks(oppDeckRecord, isOnline, cardMap)
     const myInitial = placeInitial(myMonsterDeck)
     const oppInitial = placeInitial(oppMonsterDeck)
 
@@ -505,16 +519,35 @@ export default function BattlePage() {
     if (onlineMode?.role === 'host') {
       const supabase = createClient()
       const { data: room } = await supabase.from('online_battles')
-        .select('guest_deck')
+        .select('host_deck, guest_deck, guest_id')
         .eq('id', onlineMode.roomId)
         .single()
+
+      // guest_deck を確定（優先順位順）:
+      //   1. GUEST がブロードキャストしてきたデッキ（最も確実）
+      //   2. online_battles.guest_deck（DB 保存値）
+      //   3. decks テーブルを guest_id で直接フェッチ（フォールバック）
+      let guestDeck: DeckRecord | null = guestDeckBroadcastRef.current ?? (room?.guest_deck as DeckRecord | null) ?? null
+      if (!guestDeck && room?.guest_id) {
+        const { data: gd } = await supabase.from('decks')
+          .select('monster_cards,magic_trap_cards')
+          .eq('user_id', room.guest_id)
+          .order('updated_at', { ascending: false })
+          .limit(1).maybeSingle()
+        if (gd) guestDeck = gd as DeckRecord
+      }
+
+      // host 自身のデッキ: myDeckRecord を優先し、null なら DB の host_deck を使用
+      const hostDeck = (room?.host_deck as DeckRecord | null) ?? null
+      const myDeckForGame = myDeckRecord ?? hostDeck
+
       setCoinFlipState('flipping')
       await new Promise(res => setTimeout(res, 1200))
       const first = Math.random() < 0.5
       setPlayerFirst(first)
       setCoinFlipState('result')
       await new Promise(res => setTimeout(res, 1800))
-      startGame(first ? 'my' : 'opp', room?.guest_deck ?? null)
+      startGame(first ? 'my' : 'opp', guestDeck, myDeckForGame)
       return
     }
     if (!difficulty) return
@@ -548,7 +581,19 @@ export default function BattlePage() {
       ? (from === 'monster' ? g.myMonsterDeck : g.mySpellDeck)
       : (from === 'monster' ? g.oppMonsterDeck : g.oppSpellDeck)
     const hand = isMyTurn ? g.myHand : g.oppHand
-    if (deck.length === 0) { setMessage('デッキが空です'); return }
+    if (deck.length === 0) {
+      const otherDeck = isMyTurn
+        ? (from === 'monster' ? g.mySpellDeck : g.myMonsterDeck)
+        : (from === 'monster' ? g.oppSpellDeck : g.oppMonsterDeck)
+      if (otherDeck.length === 0) {
+        addLog(g, `${isMyTurn ? '自分' : '相手'}の両デッキが尽きた！敗北`)
+        if (isMyTurn) g.myLP = 0; else g.oppLP = 0
+        setGame({ ...g })
+        return
+      }
+      setMessage('デッキが空です')
+      return
+    }
     const card = deck.shift()!
     hand.push(card)
     addLog(g, `${isMyTurn ? '自分' : '相手'}が${from === 'monster' ? 'モンスター' : '魔法/罠'}デッキからドロー`)
@@ -654,11 +699,19 @@ export default function BattlePage() {
   }
 
   async function checkOnlineTrap(cardName: string): Promise<boolean> {
+    setWaitingForTrapResponse(true)
     channelRef.current?.send({ type: 'broadcast', event: 'action_check', payload: { type: 'spell', cardName } })
     return new Promise(resolve => {
-      onlineActionResolveRef.current = resolve
+      onlineActionResolveRef.current = (activated: boolean) => {
+        setWaitingForTrapResponse(false)
+        resolve(activated)
+      }
       setTimeout(() => {
-        if (onlineActionResolveRef.current) { onlineActionResolveRef.current(false); onlineActionResolveRef.current = null }
+        if (onlineActionResolveRef.current) {
+          setWaitingForTrapResponse(false)
+          onlineActionResolveRef.current(false)
+          onlineActionResolveRef.current = null
+        }
       }, 8000)
     })
   }
@@ -680,6 +733,10 @@ export default function BattlePage() {
       if (emptyBack === -1 && emptyFront === -1) { setMessage('フィールドにスペースがありません'); return }
     }
     addLog(g, `「${card.name}」を発動！`)
+    showCardReveal(card, owner)
+    if (onlineModeRef.current && owner === 'my') {
+      channelRef.current?.send({ type: 'broadcast', event: 'card_reveal', payload: { card } })
+    }
     zoneArr[index] = null
     setZoneArr(g, zone, zoneArr)
     const grave = owner === 'my' ? g.myGrave : g.oppGrave
@@ -1199,6 +1256,13 @@ export default function BattlePage() {
       g.skipOppDraw = false
       setGame({ ...g }); await wait(700)
     } else {
+    if (g.oppMonsterDeck.length === 0 && g.oppSpellDeck.length === 0) {
+      addLog(g, '相手の両デッキが尽きた！相手の敗北')
+      g.oppLP = 0
+      setGame({ ...g })
+      setAiRunning(false)
+      return
+    }
     const handMonCount = g.oppHand.filter(c => c.type === 'monster').length
     if (handMonCount < 2 && g.oppMonsterDeck.length > 0) {
       g.oppHand.push(g.oppMonsterDeck.shift()!)
@@ -1354,6 +1418,7 @@ export default function BattlePage() {
         const { c: spellCard, i: spellIdx } = preferred
 
         addLog(g, `相手「${spellCard.name}」発動！`)
+        showCardReveal(spellCard, 'opp')
         setGame({ ...g })
         await wait(400)
 
@@ -1884,7 +1949,11 @@ export default function BattlePage() {
   }
 
   const winner = game && !battleDisplay
-    ? game.myLP <= 0 ? '相手の勝利' : game.oppLP <= 0 ? 'あなたの勝利' : null
+    ? game.myLP <= 0 ? '相手の勝利'
+      : game.oppLP <= 0 ? 'あなたの勝利'
+      : (game.turn === 'my' && game.phase === 'draw' && game.myMonsterDeck.length === 0 && game.mySpellDeck.length === 0) ? '相手の勝利'
+      : (game.turn === 'opp' && game.phase === 'draw' && game.oppMonsterDeck.length === 0 && game.oppSpellDeck.length === 0) ? 'あなたの勝利'
+      : null
     : null
 
   useEffect(() => {
@@ -2158,6 +2227,7 @@ export default function BattlePage() {
             g.singariTargetUid = fc.uid
             addLog(g, `しんがり：「${fc.data.name}」が全攻撃を受ける`)
             setGame({ ...g })
+            channelRef.current?.send({ type: 'broadcast', event: 'trap_checking', payload: { active: false } })
           }
         } else {
           setMessage('自分のモンスターを選択してください')
@@ -2184,8 +2254,10 @@ export default function BattlePage() {
     const imgUrl = fc.isAwake ? (fc.data.img_awake ?? fc.data.img_sealed) : fc.data.img_sealed
     const attr = fc.data.attribute ?? ''
     const isDefense = fc.stance === 'defense'
+    const isSingariTarget = game.singariTargetUid !== null && fc.uid === game.singariTargetUid
+    const fieldCardClass = [isLockAttackTarget ? 'lock-attack-target' : '', isSingariTarget ? 'singari-target' : ''].filter(Boolean).join(' ') || undefined
     return (
-      <div key={index} style={cardBox(isSel, borderColor, fc.hasAttacked)} className={isLockAttackTarget ? 'lock-attack-target' : undefined} onClick={handleClick}>
+      <div key={index} style={cardBox(isSel, borderColor, fc.hasAttacked)} className={fieldCardClass} onClick={handleClick}>
         {imgUrl && (
           <img src={imgUrl} style={{
             width: isDefense ? 52 : 44,
@@ -2285,12 +2357,55 @@ export default function BattlePage() {
         </div>
       )}
 
+      {/* 魔法・罠カード発動演出 */}
+      {cardReveal && (
+        <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70, pointerEvents: 'none' }}>
+          <div className="card-reveal-anim" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+            <div style={{ fontSize: 11, letterSpacing: '0.2em', color: cardReveal.owner === 'my' ? '#8cf' : '#f88', fontWeight: 'bold', textShadow: '0 0 10px currentColor' }}>
+              {cardReveal.owner === 'my' ? 'あなたが発動！' : '相手が発動！'}
+            </div>
+            <div style={{ background: '#0a0a1a', border: `2px solid ${cardReveal.owner === 'my' ? '#55f' : '#f55'}`, borderRadius: 10, padding: 8, boxShadow: `0 0 30px ${cardReveal.owner === 'my' ? 'rgba(80,80,255,0.6)' : 'rgba(255,80,80,0.6)'}` }}>
+              {(cardReveal.data.img_sealed || cardReveal.data.img) && (
+                <img
+                  src={cardReveal.data.img_sealed ?? cardReveal.data.img ?? ''}
+                  alt={cardReveal.data.name}
+                  style={{ width: 140, height: 140, objectFit: 'cover', borderRadius: 6, display: 'block' }}
+                />
+              )}
+            </div>
+            <div style={{ color: '#eee', fontSize: 15, fontWeight: 'bold', textShadow: '0 2px 8px #000', maxWidth: 200, textAlign: 'center' }}>
+              {cardReveal.data.name}
+            </div>
+            {cardReveal.data.effect && (
+              <div style={{ color: '#aaa', fontSize: 10, maxWidth: 220, textAlign: 'center', lineHeight: 1.5, padding: '4px 8px', background: 'rgba(0,0,0,0.6)', borderRadius: 6 }}>
+                {cardReveal.data.effect}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 相手がトラップを選択中：操作ブロックオーバーレイ */}
+      {(waitingForTrapResponse || opponentCheckingTrap) && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 65, pointerEvents: 'all' }}>
+          <div style={{ background: '#141428', border: '1px solid #446', borderRadius: 10, padding: '22px 40px', textAlign: 'center' }}>
+            <div style={{ fontSize: 22, marginBottom: 10, animation: 'pulse 1.2s ease-in-out infinite' }}>⏳</div>
+            <div style={{ color: '#aaf', fontSize: 13, letterSpacing: '0.08em', marginBottom: 6 }}>相手がカードを選択中...</div>
+            <div style={{ color: '#445', fontSize: 10 }}>しばらくお待ちください</div>
+          </div>
+        </div>
+      )}
+
       {/* バトル演出モーダル */}
       <style>{`
         @keyframes shatter { 0% { transform: scale(1) rotate(0deg); opacity: 1; } 100% { transform: scale(0.2) rotate(-120deg); opacity: 0; } }
         @keyframes shatter-r { 0% { transform: scale(1) rotate(0deg); opacity: 1; } 100% { transform: scale(0.2) rotate(120deg); opacity: 0; } }
         @keyframes target-blink { 0%,100% { box-shadow: 0 0 0 2px #f80, 0 0 10px rgba(255,128,0,0.5); border-color: #f80 !important; } 50% { box-shadow: none; border-color: #442 !important; } }
         .lock-attack-target { animation: target-blink 0.7s ease-in-out infinite; border-style: dashed !important; cursor: pointer; }
+        @keyframes singari-blink { 0%,100% { box-shadow: 0 0 0 2px #ff4, 0 0 14px rgba(255,255,64,0.6); border-color: #ff4 !important; } 50% { box-shadow: none; border-color: #443 !important; } }
+        .singari-target { animation: singari-blink 0.8s ease-in-out infinite; }
+        @keyframes card-reveal { 0% { opacity:0; transform:scale(0.4) rotateY(-80deg); } 18% { opacity:1; transform:scale(1.06) rotateY(0deg); } 65% { opacity:1; transform:scale(1) rotateY(0deg); } 100% { opacity:0; transform:scale(0.95); } }
+        .card-reveal-anim { animation: card-reveal 1.9s ease-in-out forwards; }
       `}</style>
       {battleDisplay && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, cursor: 'pointer' }} onClick={() => setBattleDisplay(null)}>
@@ -2457,7 +2572,11 @@ export default function BattlePage() {
               <button style={{ background: '#333', color: '#aaa', border: '1px solid #555', borderRadius: 6, padding: '8px 24px', fontSize: 13, cursor: 'pointer' }}
                 onClick={() => {
                   setTrapPrompt(null)
-                  onlineSingariSlotRef.current = -1
+                  if (onlineSingariSlotRef.current >= 0) {
+                    onlineSingariSlotRef.current = -1
+                    channelRef.current?.send({ type: 'broadcast', event: 'trap_checking', payload: { active: false } })
+                    return
+                  }
                   trapResolveRef.current?.(false); trapResolveRef.current = null
                 }}>
                 しない
