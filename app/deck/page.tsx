@@ -252,39 +252,55 @@ export default function DeckPage() {
                 ))}
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 10, background: '#111', borderRadius: '0 8px 8px 8px', padding: 16, maxHeight: '70vh', overflowY: 'auto' }}>
-                {ownedByTab.map(card => {
-                  const inDeck = countInDeck(card.id)
-                  const max = card.max_in_deck ?? 3
-                  const canAdd = inDeck < max && inDeck < card.owned
+              <div style={{ background: '#111', borderRadius: '0 8px 8px 8px', padding: 16, maxHeight: '70vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {(['UR', 'SR', 'R', 'N'] as const).map(rarity => {
+                  const group = ownedByTab.filter(c => (c.rarity ?? 'N') === rarity)
+                  if (group.length === 0) return null
+                  const rs = rarityStyle[rarity]
                   return (
-                    <div
-                      key={card.id}
-                      onClick={() => canAdd && addCard(card)}
-                      style={{
-                        background: '#1a0a00', border: `2px solid ${canAdd ? '#5c3a00' : '#2a1a00'}`,
-                        borderRadius: 8, overflow: 'hidden', cursor: canAdd ? 'pointer' : 'default',
-                        opacity: canAdd ? 1 : 0.5, transition: 'all 0.15s',
-                        position: 'relative',
-                      }}
-                      title={canAdd ? `${card.name}をデッキに追加` : `上限達成 (${inDeck}/${max})`}
-                    >
-                      <div style={{ aspectRatio: '4/3', overflow: 'hidden' }}>
-                        <img src={cardImg(card)} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <div key={rarity}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                        <span style={{ background: rs.color, color: '#000', fontSize: 10, padding: '2px 8px', borderRadius: 4, fontWeight: 'bold' }}>{rarity}</span>
+                        <div style={{ flex: 1, height: 1, background: rs.border }} />
+                        <span style={{ color: '#555', fontSize: 10 }}>{group.length}枚</span>
                       </div>
-                      <div style={{ padding: '6px 8px' }}>
-                        {(() => { const rs = rarityStyle[card.rarity ?? 'N'] ?? rarityStyle['N']; return <span style={{ background: rs.color, color: '#000', fontSize: 8, padding: '1px 4px', borderRadius: 3, fontWeight: 'bold', marginBottom: 3, display: 'inline-block' }}>{rs.label}</span> })()}
-                        <div style={{ color: '#e8c876', fontSize: 10, fontWeight: 'bold', lineHeight: 1.3, marginBottom: 3 }}>{card.name}</div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#888' }}>
-                          <span>所持 {card.owned}</span>
-                          <span style={{ color: inDeck > 0 ? '#90c890' : '#555' }}>IN {inDeck}/{max}</span>
-                        </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 10 }}>
+                        {group.map(card => {
+                          const inDeck = countInDeck(card.id)
+                          const max = card.max_in_deck ?? 3
+                          const canAdd = inDeck < max && inDeck < card.owned
+                          return (
+                            <div
+                              key={card.id}
+                              onClick={() => canAdd && addCard(card)}
+                              style={{
+                                background: '#1a0a00', border: `2px solid ${canAdd ? rs.border : '#2a1a00'}`,
+                                borderRadius: 8, overflow: 'hidden', cursor: canAdd ? 'pointer' : 'default',
+                                opacity: canAdd ? 1 : 0.5, transition: 'all 0.15s',
+                                position: 'relative',
+                              }}
+                              title={canAdd ? `${card.name}をデッキに追加` : `上限達成 (${inDeck}/${max})`}
+                            >
+                              <div style={{ aspectRatio: '4/3', overflow: 'hidden' }}>
+                                <img src={cardImg(card)} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              </div>
+                              <div style={{ padding: '6px 8px' }}>
+                                <span style={{ background: rs.color, color: '#000', fontSize: 8, padding: '1px 4px', borderRadius: 3, fontWeight: 'bold', marginBottom: 3, display: 'inline-block' }}>{rs.label}</span>
+                                <div style={{ color: '#e8c876', fontSize: 10, fontWeight: 'bold', lineHeight: 1.3, marginBottom: 3 }}>{card.name}</div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#888' }}>
+                                  <span>所持 {card.owned}</span>
+                                  <span style={{ color: inDeck > 0 ? '#90c890' : '#555' }}>IN {inDeck}/{max}</span>
+                                </div>
+                              </div>
+                              {canAdd && (
+                                <div style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(232,200,118,0.9)', color: '#0f0f0f', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold' }}>
+                                  +
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
-                      {canAdd && (
-                        <div style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(232,200,118,0.9)', color: '#0f0f0f', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold' }}>
-                          +
-                        </div>
-                      )}
                     </div>
                   )
                 })}
