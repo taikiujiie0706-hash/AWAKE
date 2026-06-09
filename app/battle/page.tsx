@@ -67,6 +67,7 @@ type GameState = {
   isFirstTurn: boolean
   skipMyDraw: boolean
   skipOppDraw: boolean
+  singariTargetUid: string | null
 }
 
 type PendingEffect =
@@ -213,6 +214,7 @@ function flipGameState(g: GameState): GameState {
     endPhaseDestroyUids: g.endPhaseDestroyUids.map(x => ({ uid: x.uid, owner: x.owner === 'my' ? 'opp' as const : 'my' as const })),
     kumomaru_atkDown: g.kumomaru_atkDown.map(x => ({ uid: x.uid, owner: x.owner === 'my' ? 'opp' as const : 'my' as const })),
     isFirstTurn: g.isFirstTurn, skipMyDraw: g.skipOppDraw, skipOppDraw: g.skipMyDraw,
+    singariTargetUid: g.singariTargetUid,
   }
 }
 
@@ -264,6 +266,8 @@ export default function BattlePage() {
   const [onlineTrapCheckPrompt, setOnlineTrapCheckPrompt] = useState<{
     cardName: string; cardEffect: string; triggeredBy: string
   } | null>(null)
+  const singariCheckedRef = useRef(false)
+  const onlineSingariSlotRef = useRef(-1)
 
   useEffect(() => {
     const supabase = createClient()
@@ -297,7 +301,14 @@ export default function BattlePage() {
         const channel = supabase.channel(`battle:${roomId}`)
         channel.on('broadcast', { event: 'game_state' }, ({ payload }: { payload: { state: GameState } }) => {
           fromBroadcastRef.current = true
-          setGame(payload.state)
+          setGame(prev => {
+            const received = payload.state
+            // Restore our own real card data for slots the opponent sees as hidden
+            const mergedMySpellZone = received.mySpellZone.map((fc, i) =>
+              fc && fc.data.id === '__hidden__' ? (prev?.mySpellZone[i] ?? null) : fc
+            )
+            return { ...received, mySpellZone: mergedMySpellZone }
+          })
           setCoinFlipState('idle')
         })
         channel.on('presence', { event: 'leave' }, () => {
@@ -361,6 +372,27 @@ export default function BattlePage() {
   }, [game?.turn, game?.phase, aiRunning, onlineMode])
 
   useEffect(() => { gameRef.current = game }, [game])
+
+  // オンライン：相手のバトルフェイズ開始時にしんがりトラップをチェック
+  useEffect(() => {
+    if (!onlineMode || !game) return
+    if (game.turn === 'opp' && game.phase === 'battle') {
+      if (singariCheckedRef.current) return
+      singariCheckedRef.current = true
+      const singariSlot = game.mySpellZone.findIndex(fc => fc?.data.id === 'trap_singari_01')
+      const hasMyMonsters = [...game.myFront, ...game.myBack].some(fc => fc !== null)
+      if (singariSlot !== -1 && hasMyMonsters) {
+        onlineSingariSlotRef.current = singariSlot
+        setTrapPrompt({
+          cardName: 'しんがり',
+          cardEffect: 'このバトルフェイズでの攻撃は全て選択したモンスターが受ける。',
+        })
+      }
+    } else {
+      singariCheckedRef.current = false
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game?.turn, game?.phase, onlineMode])
 
   // オンライン：自分のアクションで変化したゲーム状態を相手にブロードキャスト
   useEffect(() => {
@@ -440,7 +472,7 @@ export default function BattlePage() {
       log: [first === 'my' ? 'ゲーム開始！あなたが先行' : 'ゲーム開始！相手が先行'],
       selectedCard: null, pendingEffect: null,
       bannedCards: [], endPhaseDestroyUids: [], kumomaru_atkDown: [],
-      isFirstTurn: true, skipMyDraw: false, skipOppDraw: false,
+      isFirstTurn: true, skipMyDraw: false, skipOppDraw: false, singariTargetUid: null,
     })
     setMessage('')
     setCoinFlipState('idle')
@@ -901,6 +933,12 @@ export default function BattlePage() {
       : [...g.myFront, ...g.myBack].filter(Boolean)
     if (!defender && oppMonsters.length > 0) { setMessage('モンスターを先に攻撃'); return }
 
+    // オンライン：しんがりターゲットへの攻撃を強制
+    if (onlineModeRef.current && g.singariTargetUid && defender && defender.uid !== g.singariTargetUid) {
+      setMessage('しんがり：指定されたモンスターを先に攻撃してください')
+      return
+    }
+
     if (attacker.data.id === 'monster_araiguma_01' && attacker.isAwake && isMyCard && !kumaEffectHandledRef.current) {
       const araigumaInDeck = g.myMonsterDeck.filter(c => c.id === 'monster_araiguma_01')
       const emptySlots = [...g.myFront, ...g.myBack].filter(c => c === null).length
@@ -978,6 +1016,11 @@ export default function BattlePage() {
       } else {
         addLog(g, '癒しの洞窟の姫：メカドラゴンATK低下を無効')
       }
+    }
+    // しんがりターゲットが破壊された場合はクリア
+    if (g.singariTargetUid) {
+      const singariStillOnField = [...g.oppFront, ...g.oppBack, ...g.myFront, ...g.myBack].some(fc => fc?.uid === g.singariTargetUid)
+      if (!singariStillOnField) g.singariTargetUid = null
     }
     g.selectedCard = null
     setGame({ ...g })
@@ -1623,6 +1666,7 @@ export default function BattlePage() {
     g.oppFront = resetAttack(g.oppFront); g.oppBack = resetAttack(g.oppBack)
     g.turn = 'my'; g.phase = 'draw'
     g.normalSummonDone = false; g.awakeDone = false; g.selectedCard = null; g.isFirstTurn = false
+    g.singariTargetUid = null
     addLog(g, '--- 自分のターン開始 ---')
     setGame({ ...g })
     setMessage('')
@@ -1684,6 +1728,7 @@ export default function BattlePage() {
       g.oppFront = resetAttack(g.oppFront); g.oppBack = resetAttack(g.oppBack)
       g.turn = next; g.phase = 'draw'
       g.normalSummonDone = false; g.awakeDone = false; g.selectedCard = null; g.isFirstTurn = false
+      g.singariTargetUid = null
       addLog(g, `--- ${next === 'my' ? '自分' : '相手'}のターン ---`)
     }
     if (g.phase === 'main') {
@@ -1757,7 +1802,8 @@ export default function BattlePage() {
       }
       case 'singari': {
         if (!targetFc) { setMessage('モンスターを選択'); return }
-        addLog(g, `しんがり：「${targetFc.data.name}」が攻撃を全受け（手動）`)
+        addLog(g, `しんがり：「${targetFc.data.name}」が全攻撃を受ける`)
+        g.singariTargetUid = targetFc.uid
         break
       }
     }
@@ -2080,8 +2126,16 @@ export default function BattlePage() {
       if (singariTargetMode) {
         if (fc && zone.startsWith('my')) {
           setSingariTargetMode(false)
-          singariTargetResolveRef.current?.(fc.uid)
-          singariTargetResolveRef.current = null
+          if (singariTargetResolveRef.current) {
+            singariTargetResolveRef.current(fc.uid)
+            singariTargetResolveRef.current = null
+          } else if (onlineModeRef.current) {
+            // Online mode: store singari target in game state and broadcast
+            const g = { ...gameRef.current! }
+            g.singariTargetUid = fc.uid
+            addLog(g, `しんがり：「${fc.data.name}」が全攻撃を受ける`)
+            setGame({ ...g })
+          }
         } else {
           setMessage('自分のモンスターを選択してください')
         }
@@ -2357,11 +2411,32 @@ export default function BattlePage() {
             </div>
             <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
               <button style={{ background: '#e8c876', color: '#0f0f0f', border: 'none', borderRadius: 6, padding: '8px 24px', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}
-                onClick={() => { setTrapPrompt(null); trapResolveRef.current?.(true); trapResolveRef.current = null }}>
+                onClick={() => {
+                  setTrapPrompt(null)
+                  if (onlineSingariSlotRef.current >= 0) {
+                    const slot = onlineSingariSlotRef.current
+                    onlineSingariSlotRef.current = -1
+                    const g = { ...gameRef.current! }
+                    const singariCard = g.mySpellZone[slot]
+                    if (singariCard) {
+                      const arr = [...g.mySpellZone]; arr[slot] = null; g.mySpellZone = arr
+                      g.myGrave.push({ data: singariCard.data, isAwake: false })
+                      addLog(g, '「しんがり」発動！')
+                      setGame({ ...g })
+                    }
+                    setSingariTargetMode(true)
+                    return
+                  }
+                  trapResolveRef.current?.(true); trapResolveRef.current = null
+                }}>
                 発動する
               </button>
               <button style={{ background: '#333', color: '#aaa', border: '1px solid #555', borderRadius: 6, padding: '8px 24px', fontSize: 13, cursor: 'pointer' }}
-                onClick={() => { setTrapPrompt(null); trapResolveRef.current?.(false); trapResolveRef.current = null }}>
+                onClick={() => {
+                  setTrapPrompt(null)
+                  onlineSingariSlotRef.current = -1
+                  trapResolveRef.current?.(false); trapResolveRef.current = null
+                }}>
                 しない
               </button>
             </div>
