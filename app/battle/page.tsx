@@ -1757,7 +1757,7 @@ export default function BattlePage() {
         if (profile) {
           await supabase.from('profiles').update({ coins: profile.coins + reward }).eq('id', user.id)
         } else {
-          await supabase.from('profiles').insert({ id: user.id, coins: 300 + reward })
+          await supabase.from('profiles').insert({ id: user.id, coins: 1000 + reward })
         }
       })
     }
@@ -1776,7 +1776,7 @@ export default function BattlePage() {
         if (profile) {
           await supabase.from('profiles').update({ coins: profile.coins + reward }).eq('id', user.id)
         } else {
-          await supabase.from('profiles').insert({ id: user.id, coins: 300 + reward })
+          await supabase.from('profiles').insert({ id: user.id, coins: 1000 + reward })
         }
       })
     }
