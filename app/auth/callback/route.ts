@@ -24,8 +24,16 @@ export async function GET(request: Request) {
         },
       }
     )
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
+      // パスワードリセット後はパスワード設定画面へ
+      const isRecovery = data.session?.user?.aud === 'authenticated' &&
+        data.session?.user?.recovery_sent_at != null &&
+        (Date.now() / 1000 - new Date(data.session.user.recovery_sent_at).getTime() / 1000) < 3600
+      const next = searchParams.get('next')
+      if (next === '/update-password' || isRecovery) {
+        return NextResponse.redirect(`${origin}/update-password`)
+      }
       return NextResponse.redirect(`${origin}/`)
     }
   }
