@@ -246,6 +246,7 @@ export default function BattlePage() {
   const [kumaAttackModal, setKumaAttackModal] = useState<{ atkZone: string; atkIndex: number; defZone: string; defIndex: number; availableCount: number; maxSummon: number } | null>(null)
   const kumaEffectHandledRef = useRef(false)
   const kumaGameRef = useRef<GameState | null>(null)
+  const gameRef = useRef<GameState | null>(null)
   const [coinReward, setCoinReward] = useState(0)
   const coinAwardedRef = useRef(false)
   const [difficulty, setDifficulty] = useState<'easy' | 'normal' | 'hard' | null>(null)
@@ -259,6 +260,10 @@ export default function BattlePage() {
   const fromBroadcastRef = useRef(false)
   const onlineModeRef = useRef<OnlineMode | null>(null)
   const [opponentDisconnected, setOpponentDisconnected] = useState(false)
+  const onlineActionResolveRef = useRef<((activated: boolean) => void) | null>(null)
+  const [onlineTrapCheckPrompt, setOnlineTrapCheckPrompt] = useState<{
+    cardName: string; cardEffect: string; triggeredBy: string
+  } | null>(null)
 
   useEffect(() => {
     const supabase = createClient()
@@ -298,6 +303,33 @@ export default function BattlePage() {
         channel.on('presence', { event: 'leave' }, () => {
           setOpponentDisconnected(true)
         })
+        channel.on('broadcast', { event: 'action_check' }, ({ payload }: { payload: { type: string; cardName?: string } }) => {
+          const g = gameRef.current
+          if (!g) { channelRef.current?.send({ type: 'broadcast', event: 'trap_response', payload: { activated: false } }); return }
+          if (payload.type === 'spell') {
+            const akumuSlot = g.mySpellZone.findIndex(fc => fc?.data.id === 'trap_akumu_daihunka_01')
+            if (akumuSlot !== -1) {
+              setOnlineTrapCheckPrompt({
+                cardName: '悪夢の大噴火',
+                cardEffect: '発動した効果を無効化し、相手と自分の魔法・トラップゾーンのカードを全て破壊する。',
+                triggeredBy: payload.cardName ?? '相手のカード',
+              })
+            } else {
+              channelRef.current?.send({ type: 'broadcast', event: 'trap_response', payload: { activated: false } })
+            }
+          } else {
+            channelRef.current?.send({ type: 'broadcast', event: 'trap_response', payload: { activated: false } })
+          }
+        })
+        channel.on('broadcast', { event: 'trap_response' }, ({ payload }: { payload: { activated: boolean } }) => {
+          onlineActionResolveRef.current?.(payload.activated)
+          onlineActionResolveRef.current = null
+        })
+        channel.on('broadcast', { event: 'battle_anim' }, ({ payload }: { payload: { info: { atkName: string; atkImg: string; atkVal: number; defName: string | null; defImg: string | null; defVal: number; defStance: 'attack' | 'defense'; damage: number; result: string; isPlayerAttack: boolean } } }) => {
+          const info = { ...payload.info, isPlayerAttack: !payload.info.isPlayerAttack }
+          setBattleDisplay(info)
+          setTimeout(() => setBattleDisplay(null), 2000)
+        })
         channel.subscribe(async (status: string) => {
           if (status === 'SUBSCRIBED') {
             await channel.track({ role, userId: user?.id ?? '' })
@@ -328,6 +360,8 @@ export default function BattlePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game?.turn, game?.phase, aiRunning, onlineMode])
 
+  useEffect(() => { gameRef.current = game }, [game])
+
   // オンライン：自分のアクションで変化したゲーム状態を相手にブロードキャスト
   useEffect(() => {
     if (!onlineModeRef.current || !game) return
@@ -336,10 +370,12 @@ export default function BattlePage() {
       return
     }
     const flipped = flipGameState(game)
+    const HIDDEN_CARD: CardData = { id: '__hidden__', name: 'セット中', name_awake: null, type: 'trap', atk_sealed: null, def_sealed: null, atk_awake: null, def_awake: null, effect: null, effect_awake: null, img_sealed: null, img_awake: null, img: null, attribute: null, max_in_deck: null }
+    const redacted: GameState = { ...flipped, oppSpellZone: flipped.oppSpellZone.map(fc => fc ? { ...fc, data: HIDDEN_CARD } : null) }
     channelRef.current?.send({
       type: 'broadcast',
       event: 'game_state',
-      payload: { state: flipped },
+      payload: { state: redacted },
     })
   }, [game])
 
@@ -562,7 +598,17 @@ export default function BattlePage() {
     setMessage('')
   }
 
-  function activateSpell(zone: 'mySpellZone' | 'oppSpellZone', index: number) {
+  async function checkOnlineTrap(cardName: string): Promise<boolean> {
+    channelRef.current?.send({ type: 'broadcast', event: 'action_check', payload: { type: 'spell', cardName } })
+    return new Promise(resolve => {
+      onlineActionResolveRef.current = resolve
+      setTimeout(() => {
+        if (onlineActionResolveRef.current) { onlineActionResolveRef.current(false); onlineActionResolveRef.current = null }
+      }, 8000)
+    })
+  }
+
+  async function activateSpell(zone: 'mySpellZone' | 'oppSpellZone', index: number) {
     if (!game) return
     if (game.phase !== 'main' && game.phase !== 'battle' && game.phase !== 'main2') { setMessage('メイン/バトルフェイズのみ'); return }
     const g = { ...game }
@@ -583,6 +629,30 @@ export default function BattlePage() {
     setZoneArr(g, zone, zoneArr)
     const grave = owner === 'my' ? g.myGrave : g.oppGrave
     grave.push({ data: card, isAwake: false })
+
+    const REACTIVE_IDS = ['trap_singari_01', 'trap_akumu_daihunka_01', 'trap_tsurara_mahoujin_01']
+    if (onlineModeRef.current && owner === 'my' && !REACTIVE_IDS.includes(card.id)) {
+      const countered = await checkOnlineTrap(card.name)
+      if (countered) {
+        const akumuSlot = g.oppSpellZone.findIndex(fc2 => fc2?.data.id === 'trap_akumu_daihunka_01')
+        if (akumuSlot !== -1) {
+          const akumuCard = g.oppSpellZone[akumuSlot]!
+          const arr2 = [...g.oppSpellZone]; arr2[akumuSlot] = null; g.oppSpellZone = arr2
+          g.oppGrave.push({ data: akumuCard.data, isAwake: false })
+          const newMyZ = [...g.mySpellZone]
+          const newOppZ = [...g.oppSpellZone]
+          for (let idx2 = 0; idx2 < 5; idx2++) {
+            if (newMyZ[idx2]) { g.myGrave.push({ data: newMyZ[idx2]!.data, isAwake: false }); newMyZ[idx2] = null }
+            if (newOppZ[idx2]) { g.oppGrave.push({ data: newOppZ[idx2]!.data, isAwake: false }); newOppZ[idx2] = null }
+          }
+          g.mySpellZone = newMyZ; g.oppSpellZone = newOppZ
+        }
+        addLog(g, `「悪夢の大噴火」発動！「${card.name}」を無効化・全魔法罠ゾーン破壊`)
+        addMagicCounters(g)
+        setGame({ ...g })
+        return
+      }
+    }
 
     switch (card.id) {
       case 'spell_unicorn_michibiki_01': {
@@ -915,6 +985,9 @@ export default function BattlePage() {
     if (battleInfo) {
       setBattleDisplay(battleInfo)
       setTimeout(() => setBattleDisplay(null), 2000)
+      if (onlineModeRef.current) {
+        channelRef.current?.send({ type: 'broadcast', event: 'battle_anim', payload: { info: battleInfo } })
+      }
     }
     if (triggerFishermanPrompt) setFishermanPrompt(true)
   }
@@ -2081,6 +2154,14 @@ export default function BattlePage() {
       if (fc) selectCard(zone, index)
     }
     if (!fc) return <div key={index} style={emptyBox(isSel, '#446')} onClick={handleClick}>空</div>
+    if (fc.data.id === '__hidden__') {
+      return (
+        <div key={index} style={cardBox(false, '#446')}>
+          <div style={{ width: 44, height: 44, background: '#1a1430', borderRadius: 3, border: '1px solid #334', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: '#334' }}>?</div>
+          <div style={{ fontSize: 7, color: '#446', lineHeight: 1 }}>セット中</div>
+        </div>
+      )
+    }
     const imgUrl = fc.data.img ?? fc.data.img_sealed
     return (
       <div key={index} style={cardBox(isSel, '#66a')} onClick={handleClick}>
@@ -2160,14 +2241,18 @@ export default function BattlePage() {
                 {battleDisplay.result === 'draw' && '相打ち'}
                 {battleDisplay.result === 'nobreach' && '貫通失敗'}
               </div>
-              {battleDisplay.damage > 0 && (
-                <div style={{ fontSize: 52, fontWeight: 'bold', lineHeight: 1,
-                  color: battleDisplay.isPlayerAttack ? '#4f4' : '#f44',
-                  textShadow: battleDisplay.isPlayerAttack ? '0 0 20px rgba(64,255,64,0.5)' : '0 0 20px rgba(255,64,64,0.5)'
-                }}>
-                  {battleDisplay.damage}
-                </div>
-              )}
+              {battleDisplay.damage > 0 && (() => {
+                const playerTakesDamage =
+                  (battleDisplay.isPlayerAttack && (battleDisplay.result === 'lose' || battleDisplay.result === 'nobreach')) ||
+                  (!battleDisplay.isPlayerAttack && (battleDisplay.result === 'win' || battleDisplay.result === 'direct'))
+                const dmgColor = playerTakesDamage ? '#f44' : '#4f4'
+                const dmgShadow = playerTakesDamage ? '0 0 20px rgba(255,64,64,0.5)' : '0 0 20px rgba(64,255,64,0.5)'
+                return (
+                  <div style={{ fontSize: 52, fontWeight: 'bold', lineHeight: 1, color: dmgColor, textShadow: dmgShadow }}>
+                    {battleDisplay.damage}
+                  </div>
+                )
+              })()}
               {battleDisplay.damage > 0 && (
                 <div style={{ fontSize: 14, color: '#888' }}>ダメージ</div>
               )}
@@ -2277,6 +2362,28 @@ export default function BattlePage() {
               </button>
               <button style={{ background: '#333', color: '#aaa', border: '1px solid #555', borderRadius: 6, padding: '8px 24px', fontSize: 13, cursor: 'pointer' }}
                 onClick={() => { setTrapPrompt(null); trapResolveRef.current?.(false); trapResolveRef.current = null }}>
+                しない
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* オンライン：悪夢の大噴火 発動確認 */}
+      {onlineTrapCheckPrompt && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 71 }}>
+          <div style={{ background: '#1a1a1a', border: '1px solid #e8c876', borderRadius: 8, padding: 28, textAlign: 'center', minWidth: 340, maxWidth: 400 }}>
+            <div style={{ color: '#f88', fontSize: 12, marginBottom: 8 }}>「{onlineTrapCheckPrompt.triggeredBy}」発動！</div>
+            <div style={{ color: '#e8c876', fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>罠カード「{onlineTrapCheckPrompt.cardName}」</div>
+            <div style={{ color: '#888', fontSize: 11, marginBottom: 20, lineHeight: 1.6, textAlign: 'left' }}>{onlineTrapCheckPrompt.cardEffect}</div>
+            <div style={{ color: '#ccc', fontSize: 12, marginBottom: 20 }}>発動しますか？</div>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
+              <button style={{ background: '#e8c876', color: '#0f0f0f', border: 'none', borderRadius: 6, padding: '8px 24px', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}
+                onClick={() => { setOnlineTrapCheckPrompt(null); channelRef.current?.send({ type: 'broadcast', event: 'trap_response', payload: { activated: true } }) }}>
+                発動する
+              </button>
+              <button style={{ background: '#333', color: '#aaa', border: '1px solid #555', borderRadius: 6, padding: '8px 24px', fontSize: 13, cursor: 'pointer' }}
+                onClick={() => { setOnlineTrapCheckPrompt(null); channelRef.current?.send({ type: 'broadcast', event: 'trap_response', payload: { activated: false } }) }}>
                 しない
               </button>
             </div>
