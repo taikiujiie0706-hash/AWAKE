@@ -18,6 +18,14 @@ type Card = {
   img: string | null
   max_in_deck: number | null
   attribute: string | null
+  rarity: string | null
+}
+
+const rarityStyle: Record<string, { color: string; glow: string }> = {
+  UR: { color: '#e040fb', glow: '0 0 14px rgba(224,64,251,0.5)' },
+  SR: { color: '#d4af37', glow: '0 0 10px rgba(212,175,55,0.4)' },
+  R:  { color: '#4a8fdf', glow: 'none' },
+  N:  { color: '#888',    glow: 'none' },
 }
 
 const attributeColor: Record<string, string> = {
@@ -68,19 +76,24 @@ export default function CardItem({ card }: { card: Card }) {
           }}
         />
 
-        {card.attribute && (
-          <div
-            className="absolute top-2 left-2 text-xs px-2 py-0.5 rounded-full font-bold"
-            style={{
-              background: attributeColor[card.attribute] ?? 'rgba(80,80,80,0.9)',
-              color: '#fff',
-              fontSize: '0.55rem',
-              letterSpacing: '0.05em'
-            }}
-          >
-            {card.attribute}
-          </div>
-        )}
+        <div className="absolute top-2 left-2" style={{ display: 'flex', gap: 3 }}>
+          {(() => { const rs = rarityStyle[card.rarity ?? 'N'] ?? rarityStyle['N']; return <span style={{ background: rs.color, color: '#000', fontSize: '0.5rem', padding: '1px 5px', borderRadius: 3, fontWeight: 'bold' }}>{card.rarity ?? 'N'}</span> })()}
+          {card.attribute && (
+            <span
+              style={{
+                background: attributeColor[card.attribute] ?? 'rgba(80,80,80,0.9)',
+                color: '#fff',
+                fontSize: '0.55rem',
+                padding: '1px 6px',
+                borderRadius: 9999,
+                fontWeight: 'bold',
+                letterSpacing: '0.05em'
+              }}
+            >
+              {card.attribute}
+            </span>
+          )}
+        </div>
 
         <div
           className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full font-bold"

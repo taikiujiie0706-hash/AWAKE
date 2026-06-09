@@ -19,6 +19,16 @@ type Card = {
   img: string | null
   max_in_deck: number | null
   attribute: string | null
+  rarity: string | null
+}
+
+const RARITY_ORDER = ['UR', 'SR', 'R', 'N'] as const
+
+const rarityStyle: Record<string, { color: string; border: string; label: string }> = {
+  UR: { color: '#e040fb', border: '#9020c0', label: 'UR' },
+  SR: { color: '#d4af37', border: '#a08020', label: 'SR' },
+  R:  { color: '#4a8fdf', border: '#2a5faf', label: 'R'  },
+  N:  { color: '#999',    border: '#444',    label: 'N'  },
 }
 
 export default async function Home() {
@@ -75,10 +85,26 @@ export default async function Home() {
         <p className="text-xs mb-6 text-center" style={{ color: '#444', letterSpacing: '0.15em' }}>
           ─── カード一覧 ───
         </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-          {cards?.map((card: Card) => (
-            <CardItem key={card.id} card={card} />
-          ))}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+          {RARITY_ORDER.map(rarity => {
+            const group = (cards ?? []).filter((c: Card) => (c.rarity ?? 'N') === rarity)
+            if (group.length === 0) return null
+            const rs = rarityStyle[rarity]
+            return (
+              <div key={rarity}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                  <span style={{ background: rs.color, color: '#000', fontSize: 12, fontWeight: 'bold', padding: '3px 10px', borderRadius: 5 }}>{rs.label}</span>
+                  <div style={{ flex: 1, height: 1, background: `linear-gradient(90deg, ${rs.border}, transparent)` }} />
+                  <span style={{ color: '#444', fontSize: 11 }}>{group.length}枚</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+                  {group.map((card: Card) => (
+                    <CardItem key={card.id} card={card} />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
     </main>
