@@ -109,6 +109,7 @@ function placeInitial(deck: CardData[]): { back: (FieldCard | null)[]; remaining
   const remaining = [...deck]
   const back: (FieldCard | null)[] = [null, null, null, null, null]
   for (let i = 1; i <= 3; i++) {
+    if (remaining.length === 0) break
     const card = remaining.shift()!
     back[i] = toField(card)
   }
@@ -415,11 +416,23 @@ export default function BattlePage() {
     const cardMap = new Map(allCards.map(c => [c.id, c]))
     let myMonsterDeck: CardData[]
     let mySpellDeck2: CardData[]
-    if (myDeckRecord && (myDeckRecord.monster_cards.length > 0 || myDeckRecord.magic_trap_cards.length > 0)) {
+    // デッキレコードがある場合は登録カードのみ使用（全カードへのフォールバックなし）
+    if (myDeckRecord) {
       myMonsterDeck = buildDeckFromIds(myDeckRecord.monster_cards, cardMap, 15)
       mySpellDeck2 = buildDeckFromIds(myDeckRecord.magic_trap_cards, cardMap, 15)
-      if (myMonsterDeck.length === 0) myMonsterDeck = buildDecks(allCards).monsterDeck
-      if (mySpellDeck2.length === 0) mySpellDeck2 = buildDecks(allCards).spellDeck
+      // どちらかが空の場合、登録済みカード全体から補う（未登録カードは使わない）
+      if (myMonsterDeck.length === 0 || mySpellDeck2.length === 0) {
+        const allIds = [...myDeckRecord.monster_cards, ...myDeckRecord.magic_trap_cards]
+        const allRegistered = allIds.map(id => cardMap.get(id)).filter(Boolean) as CardData[]
+        if (myMonsterDeck.length === 0) {
+          const mons = allRegistered.filter(c => c.type === 'monster')
+          if (mons.length > 0) myMonsterDeck = buildDeckFromIds(myDeckRecord.monster_cards.length > 0 ? myDeckRecord.monster_cards : mons.map(c => c.id), cardMap, 15)
+        }
+        if (mySpellDeck2.length === 0) {
+          const spells = allRegistered.filter(c => c.type !== 'monster')
+          if (spells.length > 0) mySpellDeck2 = buildDeckFromIds(myDeckRecord.magic_trap_cards.length > 0 ? myDeckRecord.magic_trap_cards : spells.map(c => c.id), cardMap, 15)
+        }
+      }
     } else {
       const myDecks = buildDecks(allCards)
       myMonsterDeck = myDecks.monsterDeck
@@ -427,11 +440,21 @@ export default function BattlePage() {
     }
     let oppMonsterDeck: CardData[]
     let oppSpellDeck2: CardData[]
-    if (oppDeckRecord && (oppDeckRecord.monster_cards.length > 0 || oppDeckRecord.magic_trap_cards.length > 0)) {
+    if (oppDeckRecord) {
       oppMonsterDeck = buildDeckFromIds(oppDeckRecord.monster_cards, cardMap, 15)
       oppSpellDeck2 = buildDeckFromIds(oppDeckRecord.magic_trap_cards, cardMap, 15)
-      if (oppMonsterDeck.length === 0) oppMonsterDeck = buildDecks(allCards).monsterDeck
-      if (oppSpellDeck2.length === 0) oppSpellDeck2 = buildDecks(allCards).spellDeck
+      if (oppMonsterDeck.length === 0 || oppSpellDeck2.length === 0) {
+        const allIds = [...oppDeckRecord.monster_cards, ...oppDeckRecord.magic_trap_cards]
+        const allRegistered = allIds.map(id => cardMap.get(id)).filter(Boolean) as CardData[]
+        if (oppMonsterDeck.length === 0) {
+          const mons = allRegistered.filter(c => c.type === 'monster')
+          if (mons.length > 0) oppMonsterDeck = buildDeckFromIds(oppDeckRecord.monster_cards.length > 0 ? oppDeckRecord.monster_cards : mons.map(c => c.id), cardMap, 15)
+        }
+        if (oppSpellDeck2.length === 0) {
+          const spells = allRegistered.filter(c => c.type !== 'monster')
+          if (spells.length > 0) oppSpellDeck2 = buildDeckFromIds(oppDeckRecord.magic_trap_cards.length > 0 ? oppDeckRecord.magic_trap_cards : spells.map(c => c.id), cardMap, 15)
+        }
+      }
     } else {
       const oppDecks = buildDecks(allCards)
       oppMonsterDeck = oppDecks.monsterDeck
@@ -491,7 +514,7 @@ export default function BattlePage() {
       setPlayerFirst(first)
       setCoinFlipState('result')
       await new Promise(res => setTimeout(res, 1800))
-      startGame(first ? 'my' : 'opp', room?.guest_deck ?? undefined)
+      startGame(first ? 'my' : 'opp', room?.guest_deck ?? null)
       return
     }
     if (!difficulty) return
