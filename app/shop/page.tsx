@@ -15,6 +15,33 @@ type CardData = {
   atk_sealed: number | null
   def_sealed: number | null
   attribute: string | null
+  rarity: string | null
+}
+
+const RARITY_RATES = { N: 0.60, R: 0.25, SR: 0.12, UR: 0.03 }
+
+const rarityStyle: Record<string, { color: string; border: string; glow: string; label: string }> = {
+  N:  { color: '#999',    border: '#444',   glow: 'none',                              label: 'N'  },
+  R:  { color: '#4a8fdf', border: '#2a5faf', glow: '0 0 12px rgba(74,143,223,0.5)',    label: 'R'  },
+  SR: { color: '#d4af37', border: '#a08020', glow: '0 0 18px rgba(212,175,55,0.6)',    label: 'SR' },
+  UR: { color: '#e040fb', border: '#9020c0', glow: '0 0 24px rgba(224,64,251,0.7)',    label: 'UR' },
+}
+
+function weightedPick(cards: CardData[]): CardData {
+  const pools: Record<string, CardData[]> = { N: [], R: [], SR: [], UR: [] }
+  for (const c of cards) pools[c.rarity ?? 'N']?.push(c) ?? pools['N'].push(c)
+
+  const roll = Math.random()
+  const tiers: Array<keyof typeof RARITY_RATES> = ['UR', 'SR', 'R', 'N']
+  const thresholds = [RARITY_RATES.UR, RARITY_RATES.UR + RARITY_RATES.SR, RARITY_RATES.UR + RARITY_RATES.SR + RARITY_RATES.R, 1]
+
+  for (let i = 0; i < tiers.length; i++) {
+    if (roll < thresholds[i] && pools[tiers[i]].length > 0) {
+      const pool = pools[tiers[i]]
+      return pool[Math.floor(Math.random() * pool.length)]
+    }
+  }
+  return cards[Math.floor(Math.random() * cards.length)]
 }
 
 type Pack = {
@@ -60,7 +87,7 @@ export default function ShopPage() {
 
       const [profileRes, cardsRes, packsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
-        supabase.from('cards').select('id,name,name_awake,type,img_sealed,img_awake,img,atk_sealed,def_sealed,attribute'),
+        supabase.from('cards').select('id,name,name_awake,type,img_sealed,img_awake,img,atk_sealed,def_sealed,attribute,rarity'),
         supabase.from('packs').select('*'),
       ])
 
@@ -107,9 +134,11 @@ export default function ShopPage() {
     const user = session?.user
     if (!user) return
 
-    // カードを先に選ぶ
-    const shuffled = [...allCards].sort(() => Math.random() - 0.5)
-    const selected = shuffled.slice(0, pack.cards_per_pack)
+    // カードをレアリティ重み付き抽選で選ぶ
+    const selected: CardData[] = []
+    for (let i = 0; i < pack.cards_per_pack; i++) {
+      selected.push(weightedPick(allCards))
+    }
 
     // ref に格納してstale closureを避ける
     pendingCards.current = selected
@@ -236,18 +265,24 @@ export default function ShopPage() {
               </Link>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
-              {lastPackCards.map((card, i) => (
-                <div key={i} style={{ background: '#1a0a00', border: '1px solid #3a2000', borderRadius: 8, overflow: 'hidden' }}>
-                  <div style={{ aspectRatio: '4/3', overflow: 'hidden' }}>
-                    <img src={cardImg(card)} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              {lastPackCards.map((card, i) => {
+                const rs = rarityStyle[card.rarity ?? 'N'] ?? rarityStyle['N']
+                return (
+                  <div key={i} style={{ background: '#1a0a00', border: `1px solid ${rs.border}`, borderRadius: 8, overflow: 'hidden', boxShadow: rs.glow }}>
+                    <div style={{ aspectRatio: '4/3', overflow: 'hidden' }}>
+                      <img src={cardImg(card)} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </div>
+                    <div style={{ padding: '5px 7px' }}>
+                      <div style={{ display: 'flex', gap: 3, marginBottom: 2, flexWrap: 'wrap' }}>
+                        <span style={{ background: rs.color, color: '#000', fontSize: 8, padding: '1px 4px', borderRadius: 3, fontWeight: 'bold' }}>{rs.label}</span>
+                        {card.attribute && <span style={{ background: attributeColor[card.attribute] ?? '#555', color: '#fff', fontSize: 8, padding: '1px 4px', borderRadius: 3 }}>{card.attribute}</span>}
+                      </div>
+                      <div style={{ color: '#e8c876', fontSize: 10, fontWeight: 'bold', lineHeight: 1.3 }}>{card.name}</div>
+                      <div style={{ color: '#555', fontSize: 9, marginTop: 1 }}>{card.type === 'monster' ? `ATK ${card.atk_sealed}` : card.type === 'spell' ? '魔法' : '罠'}</div>
+                    </div>
                   </div>
-                  <div style={{ padding: '5px 7px' }}>
-                    {card.attribute && <span style={{ background: attributeColor[card.attribute] ?? '#555', color: '#fff', fontSize: 8, padding: '1px 4px', borderRadius: 3, display: 'inline-block', marginBottom: 2 }}>{card.attribute}</span>}
-                    <div style={{ color: '#e8c876', fontSize: 10, fontWeight: 'bold', lineHeight: 1.3 }}>{card.name}</div>
-                    <div style={{ color: '#555', fontSize: 9, marginTop: 1 }}>{card.type === 'monster' ? `ATK ${card.atk_sealed}` : card.type === 'spell' ? '魔法' : '罠'}</div>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
@@ -313,33 +348,39 @@ export default function ShopPage() {
             {/* カード一覧 */}
             {cards.length > 0 ? (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10, width: '100%', maxWidth: 680 }}>
-                {cards.map((card, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      background: '#1a0a00',
-                      border: '2px solid #5c3a00',
-                      borderRadius: 10,
-                      overflow: 'hidden',
-                      boxShadow: '0 0 16px rgba(232,200,118,0.3)',
-                    }}
-                  >
-                    <div style={{ aspectRatio: '4/3', overflow: 'hidden' }}>
-                      <img src={cardImg(card)} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    </div>
-                    <div style={{ padding: '7px 9px' }}>
-                      {card.attribute && (
-                        <span style={{ background: attributeColor[card.attribute] ?? '#555', color: '#fff', fontSize: 9, padding: '2px 5px', borderRadius: 3, marginBottom: 3, display: 'inline-block' }}>
-                          {card.attribute}
-                        </span>
-                      )}
-                      <div style={{ color: '#e8c876', fontSize: 11, fontWeight: 'bold', marginTop: 2, lineHeight: 1.3 }}>{card.name}</div>
-                      <div style={{ color: '#666', fontSize: 10, marginTop: 2 }}>
-                        {card.type === 'monster' ? `ATK ${card.atk_sealed}` : card.type === 'spell' ? '魔法' : '罠'}
+                {cards.map((card, i) => {
+                  const rs = rarityStyle[card.rarity ?? 'N'] ?? rarityStyle['N']
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        background: '#1a0a00',
+                        border: `2px solid ${rs.border}`,
+                        borderRadius: 10,
+                        overflow: 'hidden',
+                        boxShadow: rs.glow,
+                      }}
+                    >
+                      <div style={{ aspectRatio: '4/3', overflow: 'hidden' }}>
+                        <img src={cardImg(card)} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      </div>
+                      <div style={{ padding: '7px 9px' }}>
+                        <div style={{ display: 'flex', gap: 3, marginBottom: 3, flexWrap: 'wrap' }}>
+                          <span style={{ background: rs.color, color: '#000', fontSize: 9, padding: '2px 5px', borderRadius: 3, fontWeight: 'bold' }}>{rs.label}</span>
+                          {card.attribute && (
+                            <span style={{ background: attributeColor[card.attribute] ?? '#555', color: '#fff', fontSize: 9, padding: '2px 5px', borderRadius: 3 }}>
+                              {card.attribute}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ color: '#e8c876', fontSize: 11, fontWeight: 'bold', marginTop: 2, lineHeight: 1.3 }}>{card.name}</div>
+                        <div style={{ color: '#666', fontSize: 10, marginTop: 2 }}>
+                          {card.type === 'monster' ? `ATK ${card.atk_sealed}` : card.type === 'spell' ? '魔法' : '罠'}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <div style={{ color: '#666', fontSize: 14 }}>カードが取得できませんでした</div>

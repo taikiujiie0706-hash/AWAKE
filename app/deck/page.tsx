@@ -16,6 +16,14 @@ type CardData = {
   def_sealed: number | null
   attribute: string | null
   max_in_deck: number | null
+  rarity: string | null
+}
+
+const rarityStyle: Record<string, { color: string; border: string; label: string }> = {
+  N:  { color: '#999',    border: '#444',    label: 'N'  },
+  R:  { color: '#4a8fdf', border: '#2a5faf', label: 'R'  },
+  SR: { color: '#d4af37', border: '#a08020', label: 'SR' },
+  UR: { color: '#e040fb', border: '#9020c0', label: 'UR' },
 }
 
 type OwnedCard = CardData & { owned: number }
@@ -265,6 +273,7 @@ export default function DeckPage() {
                         <img src={cardImg(card)} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       </div>
                       <div style={{ padding: '6px 8px' }}>
+                        {(() => { const rs = rarityStyle[card.rarity ?? 'N'] ?? rarityStyle['N']; return <span style={{ background: rs.color, color: '#000', fontSize: 8, padding: '1px 4px', borderRadius: 3, fontWeight: 'bold', marginBottom: 3, display: 'inline-block' }}>{rs.label}</span> })()}
                         <div style={{ color: '#e8c876', fontSize: 10, fontWeight: 'bold', lineHeight: 1.3, marginBottom: 3 }}>{card.name}</div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#888' }}>
                           <span>所持 {card.owned}</span>
