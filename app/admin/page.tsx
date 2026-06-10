@@ -326,15 +326,13 @@ export default function AdminPage() {
                   >
                     {RARITY_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
-                  {c.type === 'monster' && (
-                    <input
-                      type="number"
-                      min={0}
-                      style={{ ...inputStyle, width: 60 }}
-                      value={c.max_in_deck ?? 0}
-                      onChange={e => setCards(prev => prev.map(x => x.id === c.id ? { ...x, max_in_deck: Number(e.target.value) } : x))}
-                    />
-                  )}
+                  <input
+                    type="number"
+                    min={0}
+                    style={{ ...inputStyle, width: 60 }}
+                    value={c.max_in_deck ?? 0}
+                    onChange={e => setCards(prev => prev.map(x => x.id === c.id ? { ...x, max_in_deck: Number(e.target.value) } : x))}
+                  />
                   <button style={buttonStyle} disabled={savingCard === c.id} onClick={() => saveCard(c)}>
                     {savingCard === c.id ? '保存中' : '保存'}
                   </button>
