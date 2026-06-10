@@ -7,7 +7,10 @@ import { useRouter } from 'next/navigation'
 export default function OnlineLobbyPage() {
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState('')
-  const [displayName, setDisplayName] = useState('')
+  const [nickname, setNickname] = useState('')
+  const [nicknameInput, setNicknameInput] = useState('')
+  const [editingNickname, setEditingNickname] = useState(false)
+  const [savingNickname, setSavingNickname] = useState(false)
   const [myDeck, setMyDeck] = useState<{ monster_cards: string[]; magic_trap_cards: string[] } | null>(null)
   const [roomCode, setRoomCode] = useState('')
   const [joinCode, setJoinCode] = useState('')
@@ -22,10 +25,13 @@ export default function OnlineLobbyPage() {
     async function init() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) { router.push('/login'); return }
-      const email = session.user.email ?? ''
       setUserId(session.user.id)
-      const name = email.split('@')[0]
-      setDisplayName(name)
+
+      const { data: profile } = await supabase.from('profiles').select('nickname').eq('id', session.user.id).maybeSingle()
+      const nick = profile?.nickname ?? ''
+      setNickname(nick)
+      setNicknameInput(nick)
+      if (!nick) setEditingNickname(true)
 
       const { data: deck } = await supabase.from('decks')
         .select('monster_cards,magic_trap_cards')
@@ -42,8 +48,19 @@ export default function OnlineLobbyPage() {
     }
   }, [router])
 
+  async function saveNickname() {
+    const trimmed = nicknameInput.trim()
+    if (!trimmed || !userId) return
+    setSavingNickname(true)
+    const supabase = createClient()
+    await supabase.from('profiles').upsert({ id: userId, nickname: trimmed })
+    setNickname(trimmed)
+    setEditingNickname(false)
+    setSavingNickname(false)
+  }
+
   async function createRoom() {
-    if (!userId) return
+    if (!userId || !nickname) return
     setErrorMsg('')
     const supabase = createClient()
     const code = Math.random().toString(36).slice(2, 8).toUpperCase()
@@ -51,7 +68,7 @@ export default function OnlineLobbyPage() {
     const { data, error } = await supabase.from('online_battles').insert({
       room_code: code,
       host_id: userId,
-      host_name: displayName,
+      host_name: nickname,
       host_deck: myDeck ?? { monster_cards: [], magic_trap_cards: [] },
       status: 'waiting',
     }).select().single()
@@ -75,7 +92,7 @@ export default function OnlineLobbyPage() {
   }
 
   async function joinRoom() {
-    if (!userId) return
+    if (!userId || !nickname) return
     if (!joinCode.trim()) { setErrorMsg('ルームコードを入力してください'); return }
     setErrorMsg('')
     const supabase = createClient()
@@ -98,7 +115,7 @@ export default function OnlineLobbyPage() {
 
     const { error: updateError } = await supabase.from('online_battles').update({
       guest_id: userId,
-      guest_name: displayName,
+      guest_name: nickname,
       guest_deck: myDeck ?? { monster_cards: [], magic_trap_cards: [] },
       status: 'playing',
     }).eq('id', room.id)
@@ -114,7 +131,7 @@ export default function OnlineLobbyPage() {
     const channel = supabase.channel(`lobby:${room.id}`)
     channel.subscribe(async (status: string) => {
       if (status === 'SUBSCRIBED') {
-        await channel.send({ type: 'broadcast', event: 'guest_joined', payload: { guestName: displayName } })
+        await channel.send({ type: 'broadcast', event: 'guest_joined', payload: { guestName: nickname } })
         channel.unsubscribe()
         router.push(`/battle?room=${room.id}&role=guest&opponent=${encodeURIComponent(hostName)}`)
       }
@@ -153,7 +170,35 @@ export default function OnlineLobbyPage() {
 
       <div style={{ ...cardStyle, textAlign: 'center', padding: '12px 24px' }}>
         <div style={{ color: '#666', fontSize: 11, marginBottom: 2 }}>プレイヤー名</div>
-        <div style={{ color: '#e8c876', fontSize: 16, fontWeight: 'bold' }}>{displayName}</div>
+        {editingNickname ? (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', marginTop: 4 }}>
+            <input
+              style={{ ...inputStyle, width: 160 }}
+              placeholder="ニックネーム"
+              value={nicknameInput}
+              maxLength={12}
+              onChange={e => setNicknameInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && saveNickname()}
+            />
+            <button
+              style={{ background: '#e8c876', color: '#0f0f0f', border: 'none', borderRadius: 8, padding: '10px 16px', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}
+              disabled={!nicknameInput.trim() || savingNickname}
+              onClick={saveNickname}
+            >
+              {savingNickname ? '保存中...' : '保存'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center' }}>
+            <div style={{ color: '#e8c876', fontSize: 16, fontWeight: 'bold' }}>{nickname}</div>
+            <button
+              style={{ background: 'none', border: 'none', color: '#888', fontSize: 11, cursor: 'pointer', textDecoration: 'underline' }}
+              onClick={() => { setNicknameInput(nickname); setEditingNickname(true) }}
+            >
+              編集
+            </button>
+          </div>
+        )}
         <div style={{ color: myDeck ? '#4a8' : '#a44', fontSize: 11, marginTop: 4 }}>
           {myDeck
             ? `デッキ: モンスター ${myDeck.monster_cards.length}枚 / 魔法・罠 ${myDeck.magic_trap_cards.length}枚`
@@ -164,7 +209,13 @@ export default function OnlineLobbyPage() {
         )}
       </div>
 
-      {phase === 'idle' && (
+      {phase === 'idle' && !nickname && (
+        <div style={{ color: '#f88', fontSize: 12, textAlign: 'center', maxWidth: 420 }}>
+          対戦を始める前にプレイヤー名を設定してください
+        </div>
+      )}
+
+      {phase === 'idle' && nickname && (
         <>
           {/* 部屋を作る */}
           <div style={cardStyle}>

@@ -28,6 +28,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [nickname, setNickname] = useState('')
   const [message, setMessage] = useState('')
   const [isSuccess, setIsSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -35,7 +36,7 @@ export default function LoginPage() {
   const supabase = createClient()
 
   async function handleSubmit() {
-    if (!email || (mode !== 'reset' && !password)) {
+    if (!email || (mode !== 'reset' && !password) || (mode === 'signup' && !nickname.trim())) {
       setMessage('すべての項目を入力してください')
       return
     }
@@ -52,10 +53,13 @@ export default function LoginPage() {
         }
 
       } else if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({ email, password })
+        const { data, error } = await supabase.auth.signUp({ email, password })
         if (error) {
           setMessage(toJa(error.message))
         } else {
+          if (data.user) {
+            await supabase.from('profiles').upsert({ id: data.user.id, nickname: nickname.trim(), coins: 1000 })
+          }
           window.location.replace('/')
         }
 
@@ -127,6 +131,19 @@ export default function LoginPage() {
               onChange={e => setPassword(e.target.value)}
               onKeyDown={onKeyDown}
               disabled={loading}
+              style={inputStyle}
+            />
+          )}
+
+          {mode === 'signup' && (
+            <input
+              type="text"
+              placeholder="ニックネーム（対戦相手に表示されます）"
+              value={nickname}
+              onChange={e => setNickname(e.target.value)}
+              onKeyDown={onKeyDown}
+              disabled={loading}
+              maxLength={12}
               style={inputStyle}
             />
           )}
