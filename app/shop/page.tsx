@@ -128,15 +128,16 @@ export default function ShopPage() {
     setShowBonusModal(false)
   }
 
-  async function openPack(pack: Pack) {
-    if (coins === null || coins < pack.price_coins || phase !== 'idle') return
+  async function openPack(pack: Pack, multiplier: number = 1) {
+    const totalCost = pack.price_coins * multiplier
+    if (coins === null || coins < totalCost || phase !== 'idle') return
     const { data: { session } } = await supabase.auth.getSession()
     const user = session?.user
     if (!user) return
 
     // カードをレアリティ重み付き抽選で選ぶ
     const selected: CardData[] = []
-    for (let i = 0; i < pack.cards_per_pack; i++) {
+    for (let i = 0; i < pack.cards_per_pack * multiplier; i++) {
       selected.push(weightedPick(allCards))
     }
 
@@ -144,7 +145,7 @@ export default function ShopPage() {
     pendingCards.current = selected
 
     // UI を即座に更新（コイン減算 + ビデオ開始）
-    const newCoins = coins - pack.price_coins
+    const newCoins = coins - totalCost
     setCoins(newCoins)
     setPhase('video')
 
@@ -298,6 +299,7 @@ export default function ShopPage() {
         {/* Pack card */}
         {packs.map(pack => {
           const affordable = (coins ?? 0) >= pack.price_coins && phase === 'idle'
+          const affordable10 = (coins ?? 0) >= pack.price_coins * 10 && phase === 'idle'
           return (
             <div key={pack.id} style={{ background: '#1a1000', border: '1px solid #5c3a00', borderRadius: 16, overflow: 'hidden', display: 'flex', alignItems: 'stretch' }}>
               <div style={{ width: 120, flexShrink: 0, background: '#0f0800', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
@@ -309,9 +311,14 @@ export default function ShopPage() {
                   <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>{pack.cards_per_pack}枚入り</div>
                   <p style={{ color: '#a08840', fontSize: 12, lineHeight: 1.7, margin: 0 }}>{pack.description}</p>
                 </div>
-                <button onClick={() => openPack(pack)} disabled={!affordable} style={{ marginTop: 14, padding: '11px 0', border: 'none', borderRadius: 8, background: affordable ? '#e8c876' : '#2a2a2a', color: affordable ? '#0f0f0f' : '#555', fontWeight: 'bold', fontSize: 14, cursor: affordable ? 'pointer' : 'not-allowed', transition: 'background 0.2s' }}>
-                  🪙 {pack.price_coins} コインで開封
-                </button>
+                <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                  <button onClick={() => openPack(pack)} disabled={!affordable} style={{ flex: 1, padding: '11px 0', border: 'none', borderRadius: 8, background: affordable ? '#e8c876' : '#2a2a2a', color: affordable ? '#0f0f0f' : '#555', fontWeight: 'bold', fontSize: 14, cursor: affordable ? 'pointer' : 'not-allowed', transition: 'background 0.2s' }}>
+                    🪙 {pack.price_coins} で開封
+                  </button>
+                  <button onClick={() => openPack(pack, 10)} disabled={!affordable10} style={{ flex: 1, padding: '11px 0', border: 'none', borderRadius: 8, background: affordable10 ? '#e8c876' : '#2a2a2a', color: affordable10 ? '#0f0f0f' : '#555', fontWeight: 'bold', fontSize: 14, cursor: affordable10 ? 'pointer' : 'not-allowed', transition: 'background 0.2s' }}>
+                    🪙 {pack.price_coins * 10} で10連開封
+                  </button>
+                </div>
               </div>
             </div>
           )
