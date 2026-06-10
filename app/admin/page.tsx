@@ -6,7 +6,7 @@ import { ADMIN_EMAIL } from '@/lib/admin'
 import Link from 'next/link'
 
 type CardRarity = { id: string; rarity: string | null }
-type AdminUser = { id: string; email: string | null; created_at: string; coins: number }
+type AdminUser = { id: string; email: string | null; created_at: string; coins: number; nickname: string | null }
 type AdminCard = { id: string; name: string; type: string; attribute: string | null; rarity: string | null; max_in_deck: number | null }
 type AdminPack = { id: string; name: string; description: string | null; price_coins: number; cards_per_pack: number }
 
@@ -289,7 +289,10 @@ export default function AdminPage() {
               {users.map(u => (
                 <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #2a2a2a' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ color: '#ccc', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+                    <div style={{ color: '#ccc', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {u.nickname ?? '(未設定)'}
+                    </div>
+                    <div style={{ color: '#888', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
                     <div style={{ color: '#555', fontSize: 11 }}>{new Date(u.created_at).toLocaleDateString('ja-JP')}</div>
                   </div>
                   <span style={{ color: '#666', fontSize: 12 }}>🪙</span>
