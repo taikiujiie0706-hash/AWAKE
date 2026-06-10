@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase'
 import CardItem from './components/CardItem'
 import LogoutButton from './components/LogoutButton'
+import AdminLink from './components/AdminLink'
 import Link from 'next/link'
 
 type Card = {
@@ -80,6 +81,7 @@ export default async function Home() {
               <span style={{ color: '#666', fontSize: 11, marginTop: 4 }}>{item.desc}</span>
             </Link>
           ))}
+          <AdminLink />
         </div>
 
         <p className="text-xs mb-6 text-center" style={{ color: '#444', letterSpacing: '0.15em' }}>
