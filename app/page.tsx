@@ -4,6 +4,8 @@ import LogoutButton from './components/LogoutButton'
 import AdminLink from './components/AdminLink'
 import Link from 'next/link'
 
+export const dynamic = 'force-dynamic'
+
 type Card = {
   id: string
   name: string
