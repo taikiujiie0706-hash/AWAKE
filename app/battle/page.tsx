@@ -68,6 +68,8 @@ type GameState = {
   skipMyDraw: boolean
   skipOppDraw: boolean
   singariTargetUid: string | null
+  myLPAtTurnStart: number
+  oppLPAtTurnStart: number
 }
 
 type PendingEffect =
@@ -216,6 +218,7 @@ function flipGameState(g: GameState): GameState {
     kumomaru_atkDown: g.kumomaru_atkDown.map(x => ({ uid: x.uid, owner: x.owner === 'my' ? 'opp' as const : 'my' as const })),
     isFirstTurn: g.isFirstTurn, skipMyDraw: g.skipOppDraw, skipOppDraw: g.skipMyDraw,
     singariTargetUid: g.singariTargetUid,
+    myLPAtTurnStart: g.oppLPAtTurnStart, oppLPAtTurnStart: g.myLPAtTurnStart,
   }
 }
 
@@ -510,6 +513,7 @@ export default function BattlePage() {
       selectedCard: null, pendingEffect: null,
       bannedCards: [], endPhaseDestroyUids: [], kumomaru_atkDown: [],
       isFirstTurn: true, skipMyDraw: false, skipOppDraw: false, singariTargetUid: null,
+      myLPAtTurnStart: 5000, oppLPAtTurnStart: 5000,
     })
     setMessage('')
     setCoinFlipState('idle')
@@ -742,7 +746,7 @@ export default function BattlePage() {
     const grave = owner === 'my' ? g.myGrave : g.oppGrave
     grave.push({ data: card, isAwake: false })
 
-    const REACTIVE_IDS = ['trap_singari_01', 'trap_akumu_daihunka_01', 'trap_tsurara_mahoujin_01']
+    const REACTIVE_IDS = ['trap_singari_01', 'trap_akumu_daihunka_01', 'trap_tsurara_mahoujin_01', 'spell_daitenshi_kago_01']
     if (onlineModeRef.current && owner === 'my' && !REACTIVE_IDS.includes(card.id)) {
       const countered = await checkOnlineTrap(card.name)
       if (countered) {
@@ -779,8 +783,8 @@ export default function BattlePage() {
         break
       }
       case 'spell_daitenshi_kago_01': {
-        addLog(g, '大天使の加護：このターンのダメージ分回復（手動）')
-        break
+        setMessage('この効果は相手のターン終了時に発動できます')
+        zoneArr[index] = fc; setZoneArr(g, zone, zoneArr); grave.pop(); return
       }
       case 'spell_dinosaur_crash_01': {
         const all: { zone: string; index: number }[] = []
@@ -1408,7 +1412,7 @@ export default function BattlePage() {
       // easy: 50%の確率でスペル発動をスキップ
     } else
     {
-      const REACTIVE = ['trap_singari_01','trap_akumu_daihunka_01','trap_tsurara_mahoujin_01']
+      const REACTIVE = ['trap_singari_01','trap_akumu_daihunka_01','trap_tsurara_mahoujin_01','spell_daitenshi_kago_01']
       const spellInHand = g.oppHand
         .map((c, i) => ({ c, i }))
         .filter(({ c }) => (c.type === 'spell' || c.type === 'trap') && !REACTIVE.includes(c.id))
@@ -1749,6 +1753,31 @@ export default function BattlePage() {
       })
       if (changed) setZoneArr(g, z, arr)
     }
+    // 大天使の加護チェック（自分の罠、相手ターン終了時）
+    {
+      const kagoSlot = g.mySpellZone.findIndex(fc => fc?.data.id === 'spell_daitenshi_kago_01')
+      const dmg = Math.max(0, g.myLPAtTurnStart - g.myLP)
+      if (kagoSlot !== -1 && dmg > 0) {
+        const activate = await new Promise<boolean>(resolve => {
+          trapResolveRef.current = resolve
+          setTrapPrompt({
+            cardName: '大天使の加護',
+            cardEffect: '相手のターン終了時に発動できる。このターンに受けたダメージを全て回復する。',
+          })
+        })
+        if (activate) {
+          const kagoCard = g.mySpellZone[kagoSlot]!
+          const arr = [...g.mySpellZone]; arr[kagoSlot] = null; g.mySpellZone = arr
+          g.myGrave.push({ data: kagoCard.data, isAwake: false })
+          g.myLP += dmg
+          addLog(g, `「大天使の加護」発動！${dmg}LP回復`)
+          setGame({ ...g })
+          await wait(700)
+        }
+      }
+    }
+    g.oppLPAtTurnStart = g.oppLP
+
     const resetAttack = (arr: (FieldCard | null)[]) => arr.map(c => c ? { ...c, hasAttacked: false } : null)
     g.myFront = resetAttack(g.myFront); g.myBack = resetAttack(g.myBack)
     g.oppFront = resetAttack(g.oppFront); g.oppBack = resetAttack(g.oppBack)
@@ -1810,6 +1839,20 @@ export default function BattlePage() {
         })
         if (changed) setZoneArr(g, z, arr)
       }
+      // 大天使の加護チェック（相手の罠、自分のターン終了時・CPU自動発動）
+      {
+        const kagoSlot = g.oppSpellZone.findIndex(fc => fc?.data.id === 'spell_daitenshi_kago_01')
+        const dmg = Math.max(0, g.oppLPAtTurnStart - g.oppLP)
+        if (kagoSlot !== -1 && dmg > 0) {
+          const kagoCard = g.oppSpellZone[kagoSlot]!
+          const arr = [...g.oppSpellZone]; arr[kagoSlot] = null; g.oppSpellZone = arr
+          g.oppGrave.push({ data: kagoCard.data, isAwake: false })
+          g.oppLP += dmg
+          addLog(g, `相手「大天使の加護」発動！${dmg}LP回復`)
+        }
+      }
+      g.myLPAtTurnStart = g.myLP
+
       const next = g.turn === 'my' ? 'opp' : 'my'
       const resetAttack = (arr: (FieldCard | null)[]) => arr.map(c => c ? { ...c, hasAttacked: false } : null)
       g.myFront = resetAttack(g.myFront); g.myBack = resetAttack(g.myBack)
