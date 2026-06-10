@@ -1959,21 +1959,21 @@ export default function BattlePage() {
   useEffect(() => {
     if (winner === 'あなたの勝利' && !coinAwardedRef.current) {
       coinAwardedRef.current = true
-      const reward = 50
+      const reward = onlineMode ? 50 : difficulty === 'hard' ? 150 : difficulty === 'normal' ? 100 : 50
       setCoinReward(reward)
       const supabase = createClient()
       supabase.auth.getUser().then(async ({ data: { user } }) => {
         if (!user) return
-        const { data: profile } = await supabase.from('profiles').select('coins').eq('id', user.id).maybeSingle()
+        const { data: profile } = await supabase.from('profiles').select('coins,wins').eq('id', user.id).maybeSingle()
         if (profile) {
-          await supabase.from('profiles').update({ coins: profile.coins + reward }).eq('id', user.id)
+          await supabase.from('profiles').update({ coins: profile.coins + reward, wins: (profile.wins ?? 0) + 1 }).eq('id', user.id)
         } else {
-          await supabase.from('profiles').insert({ id: user.id, coins: 1000 + reward })
+          await supabase.from('profiles').insert({ id: user.id, coins: 1000 + reward, wins: 1 })
         }
       })
     }
     if (!winner) coinAwardedRef.current = false
-  }, [winner])
+  }, [winner, onlineMode, difficulty])
 
   useEffect(() => {
     if (opponentDisconnected && !coinAwardedRef.current) {
@@ -1983,11 +1983,11 @@ export default function BattlePage() {
       const supabase = createClient()
       supabase.auth.getUser().then(async ({ data: { user } }) => {
         if (!user) return
-        const { data: profile } = await supabase.from('profiles').select('coins').eq('id', user.id).maybeSingle()
+        const { data: profile } = await supabase.from('profiles').select('coins,wins').eq('id', user.id).maybeSingle()
         if (profile) {
-          await supabase.from('profiles').update({ coins: profile.coins + reward }).eq('id', user.id)
+          await supabase.from('profiles').update({ coins: profile.coins + reward, wins: (profile.wins ?? 0) + 1 }).eq('id', user.id)
         } else {
-          await supabase.from('profiles').insert({ id: user.id, coins: 1000 + reward })
+          await supabase.from('profiles').insert({ id: user.id, coins: 1000 + reward, wins: 1 })
         }
       })
     }

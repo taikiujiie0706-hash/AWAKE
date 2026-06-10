@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase'
 import CardItem from './components/CardItem'
 import LogoutButton from './components/LogoutButton'
 import AdminLink from './components/AdminLink'
+import RankBadge from './components/RankBadge'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
@@ -58,7 +59,10 @@ export default async function Home() {
               style={{ background: 'linear-gradient(90deg, transparent, #5c3a00, transparent)' }}
             />
           </div>
-          <LogoutButton />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <RankBadge />
+            <LogoutButton />
+          </div>
         </div>
 
         {/* Navigation */}
