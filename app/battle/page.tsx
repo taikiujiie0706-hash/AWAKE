@@ -690,7 +690,7 @@ export default function BattlePage() {
 
   function setSpellCard(toZone: 'mySpellZone' | 'oppSpellZone', toIndex: number) {
     if (!game) return
-    if (game.phase !== 'main') { setMessage('メインフェイズのみ'); return }
+    if (game.phase !== 'main' && game.phase !== 'main2') { setMessage('メインフェイズのみ'); return }
     if (!game.selectedCard) { setMessage('手札を先に選択'); return }
     const g = { ...game }
     const isMyTurn = g.turn === 'my'
@@ -2370,7 +2370,7 @@ export default function BattlePage() {
       if (game.phase === 'main' && selIsHand && selCardIsMonster && zone === 'myBack' && !fc) {
         summonMonster('myBack', index); return
       }
-      if (game.phase === 'main' && selIsHand && selCardIsSpell && zone.startsWith(isMyTurn ? 'my' : 'opp') && !fc) {
+      if ((game.phase === 'main' || game.phase === 'main2') && selIsHand && selCardIsSpell && zone.startsWith(isMyTurn ? 'my' : 'opp') && !fc) {
         setSpellCard(zone.replace('Front','SpellZone').replace('Back','SpellZone') as 'mySpellZone' | 'oppSpellZone', index); return
       }
       selectCard(zone, index)
