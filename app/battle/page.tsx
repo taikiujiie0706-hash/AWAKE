@@ -33,6 +33,7 @@ type FieldCard = {
   lockedByUid: string | null
   magicCounters: number
   witchRevived: boolean
+  justSet: boolean
 }
 
 type GraveCard = { data: CardData; isAwake: boolean }
@@ -104,7 +105,7 @@ function buildDecks(cards: CardData[]) {
 function uid() { return Math.random().toString(36).slice(2) }
 
 function toField(card: CardData, isAwake = false): FieldCard {
-  return { uid: uid(), data: { ...card }, isAwake, stance: 'attack', hasAttacked: false, atkMod: 0, defMod: 0, cantAttack: false, lockedByUid: null, magicCounters: 0, witchRevived: false }
+  return { uid: uid(), data: { ...card }, isAwake, stance: 'attack', hasAttacked: false, atkMod: 0, defMod: 0, cantAttack: false, lockedByUid: null, magicCounters: 0, witchRevived: false, justSet: false }
 }
 
 function placeInitial(deck: CardData[]): { back: (FieldCard | null)[]; remaining: CardData[] } {
@@ -131,6 +132,12 @@ function getAllFieldCards(g: GameState, owner: 'my' | 'opp'): { fc: FieldCard; z
     arr.forEach((fc, i) => { if (fc) result.push({ fc, zone, index: i }) })
   }
   return result
+}
+
+const MAX_FIELD_MONSTERS = 5
+
+function fieldMonsterCount(g: GameState, owner: 'my' | 'opp'): number {
+  return getAllFieldCards(g, owner).length
 }
 
 function setZoneArr(g: GameState, zone: string, arr: (FieldCard | null)[]) {
@@ -607,7 +614,7 @@ export default function BattlePage() {
       if (witchOnField && g.myGrave.length > 0) {
         const eFront = g.myFront.findIndex(c => c === null)
         const eBack = g.myBack.findIndex(c => c === null)
-        if (eFront !== -1 || eBack !== -1) {
+        if ((eFront !== -1 || eBack !== -1) && fieldMonsterCount(g, 'my') < MAX_FIELD_MONSTERS) {
           addLog(g, 'ウィッチ覚醒効果：墓地から特殊召喚できます')
           setGame({ ...g })
           setGraveSelectMode({ owner: 'my', action: 'witch_revive' })
@@ -658,6 +665,7 @@ export default function BattlePage() {
     const zoneArr = [...getZoneArr(g, toZone)]
     if (zoneArr[toIndex] !== null) { setMessage('そのマスは埋まっています'); return }
     if (g.normalSummonDone) { setMessage('通常召喚は1回まで'); return }
+    if (fieldMonsterCount(g, isMyTurn ? 'my' : 'opp') >= MAX_FIELD_MONSTERS) { setMessage('フィールドのモンスターは5体までです'); return }
     zoneArr[toIndex] = toField(card)
     setZoneArr(g, toZone, zoneArr)
     hand.splice(sel.index, 1)
@@ -693,7 +701,7 @@ export default function BattlePage() {
     if (!card || card.type === 'monster') { setMessage('魔法・トラップのみ'); return }
     const zoneArr = [...getZoneArr(g, toZone)]
     if (zoneArr[toIndex] !== null) { setMessage('そのマスは埋まっています'); return }
-    zoneArr[toIndex] = toField(card)
+    zoneArr[toIndex] = { ...toField(card), justSet: true }
     setZoneArr(g, toZone, zoneArr)
     hand.splice(sel.index, 1)
     g.selectedCard = null
@@ -729,12 +737,12 @@ export default function BattlePage() {
     if (!fc) return
     const card = fc.data
     const owner: 'my' | 'opp' = zone.startsWith('my') ? 'my' : 'opp'
+    if (card.type === 'trap' && fc.justSet) { setMessage('セットしたターンには発動できません'); return }
     if (card.id === 'spell_dragon_01') {
-      const dragonInGrave = g.myGrave.filter(gc => gc.data.type === 'monster' && gc.data.name.includes('ドラゴン'))
+      const grave = owner === 'my' ? g.myGrave : g.oppGrave
+      const dragonInGrave = grave.filter(gc => gc.data.type === 'monster' && gc.data.name.includes('ドラゴン'))
       if (dragonInGrave.length === 0) { setMessage('墓地にドラゴンがいません'); return }
-      const emptyBack = g.myBack.findIndex(c => c === null)
-      const emptyFront = g.myFront.findIndex(c => c === null)
-      if (emptyBack === -1 && emptyFront === -1) { setMessage('フィールドにスペースがありません'); return }
+      if (fieldMonsterCount(g, owner) >= MAX_FIELD_MONSTERS) { setMessage('フィールドのモンスターは5体までです'); return }
     }
     addLog(g, `「${card.name}」を発動！`)
     showCardReveal(card, owner)
@@ -816,19 +824,20 @@ export default function BattlePage() {
       case 'spell_dragon_01': {
         addMagicCounters(g)
         setGame({ ...g })
-        setGraveSelectMode({ owner: 'my', action: 'dragon_revive' })
-        setShowGrave('my')
+        setGraveSelectMode({ owner, action: 'dragon_revive' })
+        setShowGrave(owner)
         setMessage('墓地のドラゴンを選択して特殊召喚')
         return
       }
       case 'spell_electric_shark_01': {
         const whale = allCards.find(c => c.id === 'monster_lightning_whale_01')
-        if (whale) {
-          const emptyBack = g.myBack.findIndex(c => c === null)
+        if (whale && fieldMonsterCount(g, owner) < MAX_FIELD_MONSTERS) {
+          const backZone = owner === 'my' ? 'myBack' : 'oppBack'
+          const emptyBack = getZoneArr(g, backZone).findIndex(c => c === null)
           if (emptyBack !== -1) {
-            const arr = [...g.myBack]
+            const arr = [...getZoneArr(g, backZone)]
             arr[emptyBack] = toField(whale)
-            g.myBack = arr
+            setZoneArr(g, backZone, arr)
             addLog(g, 'キラーホエール特殊召喚')
           }
         }
@@ -836,7 +845,7 @@ export default function BattlePage() {
       }
       case 'spell_jigoku_sinpan_01': {
         const graveToUse = owner === 'my' ? g.myGrave : g.oppGrave
-        if (graveToUse.length === 0) { addLog(g, '墓地にカードなし'); break }
+        if (!graveToUse.some(gc => gc.data.type === 'monster')) { addLog(g, '墓地にモンスターなし'); break }
         g.pendingEffect = { type: 'coin_toss', graveIndex: -1, owner }
         addLog(g, '地獄の審判：墓地からカードを選択')
         addMagicCounters(g)
@@ -1123,6 +1132,7 @@ export default function BattlePage() {
     if (!kumaAttackModal || !game) return
     const g = { ...game }
     for (let i = 0; i < count; i++) {
+      if (fieldMonsterCount(g, 'my') >= MAX_FIELD_MONSTERS) break
       const deckIdx = g.myMonsterDeck.findIndex(c => c.id === 'monster_araiguma_01')
       if (deckIdx === -1) break
       const card = g.myMonsterDeck.splice(deckIdx, 1)[0]
@@ -1166,7 +1176,7 @@ export default function BattlePage() {
         const whaleInHand = g.oppHand.findIndex(c => c.id === 'monster_lightning_whale_01')
         const whaleInDeck = g.oppMonsterDeck.findIndex(c => c.id === 'monster_lightning_whale_01')
         const emptyBack = g.oppBack.findIndex(c => c === null)
-        if (emptyBack !== -1) {
+        if (emptyBack !== -1 && fieldMonsterCount(g, 'opp') < MAX_FIELD_MONSTERS) {
           let whale: CardData | null = null
           if (whaleInHand !== -1) { whale = g.oppHand.splice(whaleInHand, 1)[0] }
           else if (whaleInDeck !== -1) { whale = g.oppMonsterDeck.splice(whaleInDeck, 1)[0] }
@@ -1179,7 +1189,9 @@ export default function BattlePage() {
       }
       case 'spell_dragon_01': {
         const dragonInGrave = g.oppGrave.filter(gc => gc.data.type === 'monster' && gc.data.name.includes('ドラゴン'))
-        if (dragonInGrave.length > 0) {
+        if (dragonInGrave.length === 0) { addLog(g, '巨竜の再来：墓地にドラゴンなし'); break }
+        if (fieldMonsterCount(g, 'opp') >= MAX_FIELD_MONSTERS) { addLog(g, '巨竜の再来：フィールドにスペースなし'); break }
+        {
           const target = dragonInGrave[dragonInGrave.length - 1]
           const emptyBack = g.oppBack.findIndex(c => c === null)
           const emptyFront = g.oppFront.findIndex(c => c === null)
@@ -1192,7 +1204,7 @@ export default function BattlePage() {
             g.oppGrave = g.oppGrave.filter(gc => gc !== target)
             addLog(g, `巨竜の再来：「${target.data.name}」特殊召喚`)
           }
-        } else { addLog(g, '巨竜の再来：墓地にドラゴンなし') }
+        }
         break
       }
       case 'spell_dinosaur_crash_01': {
@@ -1234,6 +1246,71 @@ export default function BattlePage() {
           h.push(t.fc.data)
           addLog(g, `大竜巻：「${t.fc.data.name}」を手札に戻した`)
         }
+        break
+      }
+      case 'spell_jigoku_sinpan_01': {
+        const monsters = g.oppGrave
+          .map((gc, i) => ({ gc, i }))
+          .filter(x => x.gc.data.type === 'monster')
+          .sort((a, b) => (b.gc.data.atk_sealed ?? 0) - (a.gc.data.atk_sealed ?? 0))
+        if (monsters.length === 0) { addLog(g, '地獄の審判：墓地にモンスターなし'); break }
+        const { gc, i } = monsters[0]
+        if (Math.random() < 0.5) {
+          if (fieldMonsterCount(g, 'opp') < MAX_FIELD_MONSTERS) {
+            const emptyBack = g.oppBack.findIndex(c => c === null)
+            const emptyFront = g.oppFront.findIndex(c => c === null)
+            const targetZone = emptyBack !== -1 ? 'oppBack' : emptyFront !== -1 ? 'oppFront' : null
+            const targetIdx = emptyBack !== -1 ? emptyBack : emptyFront
+            if (targetZone && targetIdx !== -1) {
+              const arr = [...getZoneArr(g, targetZone)]
+              arr[targetIdx] = toField(gc.data, gc.isAwake)
+              setZoneArr(g, targetZone, arr)
+              g.oppGrave = g.oppGrave.filter((_, idx) => idx !== i)
+              addLog(g, `地獄の審判：コイン表！「${gc.data.name}」特殊召喚`)
+            }
+          } else {
+            addLog(g, '地獄の審判：コイン表だがフィールドにスペースなし')
+          }
+        } else {
+          g.bannedCards.push(gc.data.id)
+          g.oppGrave = g.oppGrave.filter((_, idx) => idx !== i)
+          addLog(g, `地獄の審判：コイン裏…「${gc.data.name}」を除外`)
+        }
+        break
+      }
+      case 'spell_seiryu_manako_01': {
+        const targets = g.myFront
+          .map((fc, i) => ({ fc, i }))
+          .filter((x): x is { fc: FieldCard; i: number } => !!x.fc?.isAwake)
+          .sort((a, b) => (b.fc.data.atk_awake ?? 0) - (a.fc.data.atk_awake ?? 0))
+        if (targets.length === 0) { addLog(g, '青龍の眼：対象なし'); break }
+        const { fc, i } = targets[0]
+        const backArr = [...g.myBack]
+        const empty = backArr.findIndex(c => c === null)
+        if (empty === -1) { addLog(g, '青龍の眼：スペースなし'); break }
+        backArr[empty] = { ...fc, isAwake: false }
+        const frontArr = [...g.myFront]; frontArr[i] = null; g.myFront = frontArr
+        g.myBack = backArr
+        addLog(g, `青龍の眼：「${fc.data.name}」を封印に戻した`)
+        break
+      }
+      case 'spell_mizou_daisaigai_01': {
+        const targets = g.myBack
+          .map((fc, i) => ({ fc, i }))
+          .filter((x): x is { fc: FieldCard; i: number } => !!x.fc && !x.fc.isAwake)
+          .sort((a, b) => (b.fc.data.atk_awake ?? 0) - (a.fc.data.atk_awake ?? 0))
+        if (targets.length === 0) { addLog(g, '未曾有の大災害：対象なし'); break }
+        const { fc, i } = targets[0]
+        const arr = [...g.myBack]
+        const forceAwakeBoost = fc.data.id === 'monster_chuta_01' ? fc.magicCounters * 1000 : 0
+        arr[i] = { ...fc, isAwake: true, atkMod: fc.atkMod + forceAwakeBoost }
+        g.myBack = arr
+        if (fc.data.id === 'monster_healing_cave_01') {
+          restoreAtkDef(g, 'my')
+          addLog(g, '癒しの洞窟の姫：フィールドのATK/DEF低下を全て回復')
+        }
+        g.endPhaseDestroyUids.push({ uid: fc.uid, owner: 'my' })
+        addLog(g, `未曾有の大災害：「${fc.data.name}」を覚醒させ破壊予約`)
         break
       }
       default:
@@ -1286,7 +1363,7 @@ export default function BattlePage() {
         .map((gc, i) => ({ gc, i }))
         .filter(x => x.gc.data.type === 'monster')
         .sort((a, b) => (b.gc.data.atk_sealed ?? 0) - (a.gc.data.atk_sealed ?? 0))
-      const emptySlots = [...g.oppBack, ...g.oppFront].filter(c => c === null).length
+      const emptySlots = Math.min([...g.oppBack, ...g.oppFront].filter(c => c === null).length, MAX_FIELD_MONSTERS - fieldMonsterCount(g, 'opp'))
       const toRevive = graveMonsters.slice(0, emptySlots)
       if (toRevive.length > 0) {
         const removeIndices = new Set(toRevive.map(x => x.i))
@@ -1310,7 +1387,7 @@ export default function BattlePage() {
         .map((c, i) => ({ c, i }))
         .filter(({ c }) => c.type === 'monster' && c.id !== 'monster_lightning_whale_01')
         .sort((a, b) => (b.c.atk_sealed ?? 0) - (a.c.atk_sealed ?? 0))
-      if (candidates.length > 0 && emptyBack !== -1) {
+      if (candidates.length > 0 && emptyBack !== -1 && fieldMonsterCount(g, 'opp') < MAX_FIELD_MONSTERS) {
         const { c, i } = candidates[0]
         const arr = [...g.oppBack]; arr[emptyBack] = toField(c); g.oppBack = arr
         g.oppHand.splice(i, 1)
@@ -1550,6 +1627,7 @@ export default function BattlePage() {
           if (atkFc.data.id === 'monster_araiguma_01' && atkFc.isAwake) {
             let summoned = false
             while (true) {
+              if (fieldMonsterCount(g, 'opp') >= MAX_FIELD_MONSTERS) break
               const deckIdx = g.oppMonsterDeck.findIndex(c => c.id === 'monster_araiguma_01')
               if (deckIdx === -1) break
               const eBack = [...g.oppBack].findIndex(c => c === null)
@@ -1753,6 +1831,18 @@ export default function BattlePage() {
       })
       if (changed) setZoneArr(g, z, arr)
     }
+    for (const { uid: targetUid, owner } of g.endPhaseDestroyUids) {
+      for (const z of ['Front', 'Back']) {
+        const zone = `${owner}${z}`
+        const arr = [...getZoneArr(g, zone)]
+        const idx = arr.findIndex(fc => fc?.uid === targetUid)
+        if (idx !== -1) { removeFromField(g, zone, idx); addLog(g, '大災害：予約破壊') }
+      }
+    }
+    g.endPhaseDestroyUids = []
+    g.mySpellZone = g.mySpellZone.map(fc => fc ? { ...fc, justSet: false } : null)
+    g.oppSpellZone = g.oppSpellZone.map(fc => fc ? { ...fc, justSet: false } : null)
+
     // 大天使の加護チェック（自分の罠、相手ターン終了時）
     {
       const kagoSlot = g.mySpellZone.findIndex(fc => fc?.data.id === 'spell_daitenshi_kago_01')
@@ -1825,6 +1915,8 @@ export default function BattlePage() {
         }
       }
       g.endPhaseDestroyUids = []
+      g.mySpellZone = g.mySpellZone.map(fc => fc ? { ...fc, justSet: false } : null)
+      g.oppSpellZone = g.oppSpellZone.map(fc => fc ? { ...fc, justSet: false } : null)
       const witchZones = g.turn === 'my' ? ['myFront', 'myBack'] : ['oppFront', 'oppBack']
       for (const z of witchZones) {
         const arr = [...getZoneArr(g, z)]
@@ -1956,8 +2048,10 @@ export default function BattlePage() {
     const grave = effect.owner === 'my' ? g.myGrave : g.oppGrave
     const card = grave[effect.graveIndex]
     if (result) {
-      addLog(g, `コイン表！「${card.data.name}」特殊召喚`)
-      if (card.data.type === 'monster') {
+      if (fieldMonsterCount(g, effect.owner) >= MAX_FIELD_MONSTERS) {
+        addLog(g, `コイン表！しかしフィールドにスペースがなく特殊召喚できない`)
+      } else {
+        addLog(g, `コイン表！「${card.data.name}」特殊召喚`)
         const backZone = effect.owner === 'my' ? 'myBack' : 'oppBack'
         const frontZone = effect.owner === 'my' ? 'myFront' : 'oppFront'
         const backArr = [...getZoneArr(g, backZone)]
@@ -1970,15 +2064,6 @@ export default function BattlePage() {
           const arr = [...getZoneArr(g, targetZone)]
           arr[targetIdx] = toField(card.data, card.isAwake)
           setZoneArr(g, targetZone, arr)
-          grave.splice(effect.graveIndex, 1)
-        }
-      } else {
-        const spellZone = effect.owner === 'my' ? 'mySpellZone' : 'oppSpellZone'
-        const arr = [...getZoneArr(g, spellZone)]
-        const empty = arr.findIndex(c => c === null)
-        if (empty !== -1) {
-          arr[empty] = toField(card.data, false)
-          setZoneArr(g, spellZone, arr)
           grave.splice(effect.graveIndex, 1)
         }
       }
@@ -2777,10 +2862,10 @@ export default function BattlePage() {
               {(showGrave === 'my' ? game.myGrave : game.oppGrave).map((gc, i) => {
                 const isDragonSelectable = graveSelectMode?.action === 'dragon_revive' && gc.data.type === 'monster' && gc.data.name.includes('ドラゴン')
                 const isWitchSelectable = graveSelectMode?.action === 'witch_revive' && gc.data.type === 'monster'
-                const isSelectableCard = graveSelectMode && graveSelectMode.action !== 'dragon_revive' && graveSelectMode.action !== 'witch_revive'
+                const isSelectableCard = graveSelectMode && graveSelectMode.action !== 'dragon_revive' && graveSelectMode.action !== 'witch_revive' && gc.data.type === 'monster'
                 const anySelectable = isDragonSelectable || isWitchSelectable || isSelectableCard
                 const cardBorder = isDragonSelectable ? '2px solid #f80' : (isWitchSelectable || isSelectableCard) ? '1px solid #e8c876' : 'none'
-                const cardOpacity = (graveSelectMode?.action === 'dragon_revive' && !isDragonSelectable) || (graveSelectMode?.action === 'witch_revive' && gc.data.type !== 'monster') ? 0.35 : 1
+                const cardOpacity = (graveSelectMode?.action === 'dragon_revive' && !isDragonSelectable) || (graveSelectMode?.action === 'witch_revive' && gc.data.type !== 'monster') || (graveSelectMode?.action === 'jigoku_sinpan' && gc.data.type !== 'monster') ? 0.35 : 1
                 const cardCursor = anySelectable ? 'pointer' : 'default'
                 return (
                 <div key={i} style={{ width: 60, fontSize: 8, color: '#ccc', textAlign: 'center', cursor: cardCursor, border: cardBorder, borderRadius: 4, padding: 2, opacity: cardOpacity }}
@@ -2795,19 +2880,24 @@ export default function BattlePage() {
                       }
                       setGame({ ...g }); setShowGrave(null); setGraveSelectMode(null); setMessage(''); return
                     }
+                    if (fieldMonsterCount(g, graveSelectMode.owner) >= MAX_FIELD_MONSTERS) { setMessage('フィールドのモンスターは5体までです'); return }
                     if (graveSelectMode.action === 'dragon_revive') {
                       if (gc.data.type !== 'monster' || !gc.data.name.includes('ドラゴン')) { setMessage('ドラゴンを選択してください'); return }
                       const revived = grave[i]
-                      const backArr = [...g.myBack]; const frontArr = [...g.myFront]
+                      const backZone = graveSelectMode.owner === 'my' ? 'myBack' : 'oppBack'
+                      const frontZone = graveSelectMode.owner === 'my' ? 'myFront' : 'oppFront'
+                      const backArr = [...getZoneArr(g, backZone)]
+                      const frontArr = [...getZoneArr(g, frontZone)]
                       const emptyBack = backArr.findIndex(c => c === null)
                       const emptyFront = frontArr.findIndex(c => c === null)
-                      const targetZoneStr: string | null = emptyBack !== -1 ? 'myBack' : emptyFront !== -1 ? 'myFront' : null
+                      const targetZoneStr: string | null = emptyBack !== -1 ? backZone : emptyFront !== -1 ? frontZone : null
                       const targetIdx = emptyBack !== -1 ? emptyBack : emptyFront !== -1 ? emptyFront : -1
                       if (!targetZoneStr || targetIdx === -1) { setMessage('フィールドにスペースがありません'); return }
                       const arr = [...getZoneArr(g, targetZoneStr)]
                       arr[targetIdx] = toField(revived.data, revived.isAwake)
                       setZoneArr(g, targetZoneStr, arr)
-                      g.myGrave = g.myGrave.filter((_, idx) => idx !== i)
+                      if (graveSelectMode.owner === 'my') g.myGrave = g.myGrave.filter((_, idx) => idx !== i)
+                      else g.oppGrave = g.oppGrave.filter((_, idx) => idx !== i)
                       addLog(g, `巨竜の再来：「${revived.data.name}」特殊召喚`)
                       setGame({ ...g }); setShowGrave(null); setGraveSelectMode(null); setMessage(''); return
                     }
