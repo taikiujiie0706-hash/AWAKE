@@ -63,7 +63,7 @@ type GameState = {
   selectedCard: { zone: string; index: number } | null
   pendingEffect: PendingEffect | null
   bannedCards: string[]
-  endPhaseDestroyUids: { uid: string; owner: 'my' | 'opp' }[]
+  endPhaseDestroyUids: { uid: string; owner: 'my' | 'opp'; dueAtOwner: 'my' | 'opp' }[]
   kumomaru_atkDown: { uid: string; owner: 'my' | 'opp' }[]
   isFirstTurn: boolean
   skipMyDraw: boolean
@@ -221,7 +221,7 @@ function flipGameState(g: GameState): GameState {
     phase: g.phase, normalSummonDone: g.normalSummonDone, awakeDone: g.awakeDone,
     log: g.log, selectedCard: null, pendingEffect: g.pendingEffect,
     bannedCards: g.bannedCards,
-    endPhaseDestroyUids: g.endPhaseDestroyUids.map(x => ({ uid: x.uid, owner: x.owner === 'my' ? 'opp' as const : 'my' as const })),
+    endPhaseDestroyUids: g.endPhaseDestroyUids.map(x => ({ uid: x.uid, owner: x.owner === 'my' ? 'opp' as const : 'my' as const, dueAtOwner: x.dueAtOwner === 'my' ? 'opp' as const : 'my' as const })),
     kumomaru_atkDown: g.kumomaru_atkDown.map(x => ({ uid: x.uid, owner: x.owner === 'my' ? 'opp' as const : 'my' as const })),
     isFirstTurn: g.isFirstTurn, skipMyDraw: g.skipOppDraw, skipOppDraw: g.skipMyDraw,
     singariTargetUid: g.singariTargetUid,
@@ -744,6 +744,11 @@ export default function BattlePage() {
       if (dragonInGrave.length === 0) { setMessage('墓地にドラゴンがいません'); return }
       if (fieldMonsterCount(g, owner) >= MAX_FIELD_MONSTERS) { setMessage('フィールドのモンスターは5体までです'); return }
     }
+    if (card.id === 'trap_kuromajutu_bousou_01') {
+      const ownZones = owner === 'my' ? ['myFront', 'myBack'] : ['oppFront', 'oppBack']
+      const hasTarget = ownZones.some(z => getZoneArr(g, z).some(c => c?.witchRevived && !c.isAwake))
+      if (!hasTarget) { setMessage('ナイトメア・ウィッチで特殊召喚した封印状態のモンスターがいません'); return }
+    }
     addLog(g, `「${card.name}」を発動！`)
     showCardReveal(card, owner)
     if (onlineModeRef.current && owner === 'my') {
@@ -815,6 +820,26 @@ export default function BattlePage() {
       }
       case 'spell_mizou_daisaigai_01': {
         g.pendingEffect = { type: 'select_target', action: 'awake_then_destroy_next', sourceZone: zone, sourceIndex: index, message: '覚醒させるモンスターを選択', sourceName: card.name }
+        break
+      }
+      case 'trap_kuromajutu_bousou_01': {
+        const ownZones = owner === 'my' ? ['myFront', 'myBack'] as const : ['oppFront', 'oppBack'] as const
+        for (const z of ownZones) {
+          const arr = [...getZoneArr(g, z)]
+          arr.forEach((c, i) => {
+            if (c?.witchRevived && !c.isAwake) {
+              const forceAwakeBoost = c.data.id === 'monster_chuta_01' ? c.magicCounters * 1000 : 0
+              arr[i] = { ...c, isAwake: true, atkMod: c.atkMod + forceAwakeBoost, witchRevived: false }
+              g.endPhaseDestroyUids.push({ uid: c.uid, owner, dueAtOwner: owner })
+              addLog(g, `黒魔術の暴走：「${c.data.name}」を覚醒させ破壊予約`)
+              if (c.data.id === 'monster_healing_cave_01') {
+                restoreAtkDef(g, owner)
+                addLog(g, '癒しの洞窟の姫：フィールドのATK/DEF低下を全て回復')
+              }
+            }
+          })
+          setZoneArr(g, z, arr)
+        }
         break
       }
       case 'spell_seiryu_manako_01': {
@@ -1309,8 +1334,27 @@ export default function BattlePage() {
           restoreAtkDef(g, 'my')
           addLog(g, '癒しの洞窟の姫：フィールドのATK/DEF低下を全て回復')
         }
-        g.endPhaseDestroyUids.push({ uid: fc.uid, owner: 'my' })
+        g.endPhaseDestroyUids.push({ uid: fc.uid, owner: 'my', dueAtOwner: 'my' })
         addLog(g, `未曾有の大災害：「${fc.data.name}」を覚醒させ破壊予約`)
+        break
+      }
+      case 'trap_kuromajutu_bousou_01': {
+        for (const z of ['oppFront', 'oppBack'] as const) {
+          const arr = [...getZoneArr(g, z)]
+          arr.forEach((c, i) => {
+            if (c?.witchRevived && !c.isAwake) {
+              const forceAwakeBoost = c.data.id === 'monster_chuta_01' ? c.magicCounters * 1000 : 0
+              arr[i] = { ...c, isAwake: true, atkMod: c.atkMod + forceAwakeBoost, witchRevived: false }
+              g.endPhaseDestroyUids.push({ uid: c.uid, owner: 'opp', dueAtOwner: 'opp' })
+              addLog(g, `黒魔術の暴走：「${c.data.name}」を覚醒させ破壊予約`)
+              if (c.data.id === 'monster_healing_cave_01') {
+                restoreAtkDef(g, 'opp')
+                addLog(g, '癒しの洞窟の姫：フィールドのATK/DEF低下を全て回復')
+              }
+            }
+          })
+          setZoneArr(g, z, arr)
+        }
         break
       }
       default:
@@ -1831,7 +1875,8 @@ export default function BattlePage() {
       })
       if (changed) setZoneArr(g, z, arr)
     }
-    for (const { uid: targetUid, owner } of g.endPhaseDestroyUids) {
+    for (const { uid: targetUid, owner, dueAtOwner } of g.endPhaseDestroyUids) {
+      if (dueAtOwner !== 'opp') continue
       for (const z of ['Front', 'Back']) {
         const zone = `${owner}${z}`
         const arr = [...getZoneArr(g, zone)]
@@ -1839,7 +1884,7 @@ export default function BattlePage() {
         if (idx !== -1) { removeFromField(g, zone, idx); addLog(g, '大災害：予約破壊') }
       }
     }
-    g.endPhaseDestroyUids = []
+    g.endPhaseDestroyUids = g.endPhaseDestroyUids.filter(x => x.dueAtOwner !== 'opp')
     g.mySpellZone = g.mySpellZone.map(fc => fc ? { ...fc, justSet: false } : null)
     g.oppSpellZone = g.oppSpellZone.map(fc => fc ? { ...fc, justSet: false } : null)
 
@@ -1906,7 +1951,8 @@ export default function BattlePage() {
         })
         setZoneArr(g, z, arr)
       }
-      for (const { uid: targetUid, owner } of g.endPhaseDestroyUids) {
+      for (const { uid: targetUid, owner, dueAtOwner } of g.endPhaseDestroyUids) {
+        if (dueAtOwner !== 'my') continue
         for (const z of ['Front', 'Back']) {
           const zone = `${owner}${z}`
           const arr = [...getZoneArr(g, zone)]
@@ -1914,7 +1960,7 @@ export default function BattlePage() {
           if (idx !== -1) { removeFromField(g, zone, idx); addLog(g, '大災害：予約破壊') }
         }
       }
-      g.endPhaseDestroyUids = []
+      g.endPhaseDestroyUids = g.endPhaseDestroyUids.filter(x => x.dueAtOwner !== 'my')
       g.mySpellZone = g.mySpellZone.map(fc => fc ? { ...fc, justSet: false } : null)
       g.oppSpellZone = g.oppSpellZone.map(fc => fc ? { ...fc, justSet: false } : null)
       const witchZones = g.turn === 'my' ? ['myFront', 'myBack'] : ['oppFront', 'oppBack']
@@ -2012,7 +2058,8 @@ export default function BattlePage() {
             restoreAtkDef(g, owner)
             addLog(g, '癒しの洞窟の姫：フィールドのATK/DEF低下を全て回復')
           }
-          g.endPhaseDestroyUids.push({ uid: targetFc.uid, owner })
+          const dueAtOwner: 'my' | 'opp' = g.turn === 'my' ? 'opp' : 'my'
+          g.endPhaseDestroyUids.push({ uid: targetFc.uid, owner, dueAtOwner })
         }
         break
       }
