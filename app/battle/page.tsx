@@ -264,6 +264,7 @@ export default function BattlePage() {
   } | null>(null)
   const [awakeDisplay, setAwakeDisplay] = useState<{ name: string; img: string } | null>(null)
   const [trapPrompt, setTrapPrompt] = useState<{ cardName: string; cardEffect?: string; triggeredBy?: string } | null>(null)
+  const [activateConfirm, setActivateConfirm] = useState<{ zone: 'mySpellZone' | 'oppSpellZone'; index: number; card: CardData } | null>(null)
   const [singariTargetMode, setSingariTargetMode] = useState(false)
   const trapResolveRef = useRef<((yes: boolean) => void) | null>(null)
   const singariTargetResolveRef = useRef<((uid: string | null) => void) | null>(null)
@@ -484,10 +485,9 @@ export default function BattlePage() {
       const spellDeck = buildDeckFromIds(deckRecord.magic_trap_cards, cardMap, 15)
       return { monsterDeck, spellDeck }
     }
-    // デッキレコードが null/空 の場合: オンラインモードは全カードフォールバック禁止
+    // デッキレコードが null/空 の場合: 全カードからランダムデッキを構築（「ランダムデッキで対戦」）
     if (isOnline) {
-      console.error('[AWAKE] deck record missing in online mode — using empty deck')
-      return { monsterDeck: [], spellDeck: [] }
+      console.warn('[AWAKE] deck record missing in online mode — using random deck')
     }
     const d = buildDecks(allCards)
     return { monsterDeck: d.monsterDeck, spellDeck: d.spellDeck }
@@ -721,7 +721,6 @@ export default function BattlePage() {
     setZoneArr(g, toZone, zoneArr)
     hand.splice(sel.index, 1)
     g.selectedCard = null
-    addLog(g, `${isMyTurn ? '自分' : '相手'}が「${card.name}」をセット`)
     setGame({ ...g })
     setMessage('')
   }
@@ -2478,7 +2477,7 @@ export default function BattlePage() {
         return
       }
       if (isPendingTarget) return
-      if (fc && zone === 'mySpellZone' && (game.phase === 'main' || game.phase === 'battle' || game.phase === 'main2')) { activateSpell(zone as 'mySpellZone' | 'oppSpellZone', index); return }
+      if (fc && zone === 'mySpellZone' && (game.phase === 'main' || game.phase === 'battle' || game.phase === 'main2')) { setActivateConfirm({ zone: zone as 'mySpellZone' | 'oppSpellZone', index, card: fc.data }); return }
       if (!fc && selIsHand && selCardIsSpell) { setSpellCard(zone as 'mySpellZone' | 'oppSpellZone', index); return }
       if (fc) selectCard(zone, index)
     }
@@ -2759,6 +2758,33 @@ export default function BattlePage() {
                   }
                   trapResolveRef.current?.(false); trapResolveRef.current = null
                 }}>
+                しない
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 伏せカード発動確認モーダル */}
+      {activateConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 70 }}>
+          <div style={{ background: '#1a1a1a', border: '1px solid #e8c876', borderRadius: 8, padding: 28, textAlign: 'center', minWidth: 280, maxWidth: 400 }}>
+            <div style={{ color: '#e8c876', fontSize: 15, fontWeight: 'bold', marginBottom: 8 }}>「{activateConfirm.card.name}」</div>
+            {activateConfirm.card.effect && (
+              <div style={{ color: '#888', fontSize: 11, marginBottom: 12, lineHeight: 1.5, textAlign: 'left' }}>{activateConfirm.card.effect}</div>
+            )}
+            <div style={{ color: '#ccc', fontSize: 12, marginBottom: 20 }}>発動しますか？</div>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
+              <button style={{ background: '#e8c876', color: '#0f0f0f', border: 'none', borderRadius: 6, padding: '8px 24px', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}
+                onClick={() => {
+                  const { zone, index } = activateConfirm
+                  setActivateConfirm(null)
+                  activateSpell(zone, index)
+                }}>
+                発動する
+              </button>
+              <button style={{ background: '#333', color: '#aaa', border: '1px solid #555', borderRadius: 6, padding: '8px 24px', fontSize: 13, cursor: 'pointer' }}
+                onClick={() => setActivateConfirm(null)}>
                 しない
               </button>
             </div>
