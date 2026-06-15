@@ -74,7 +74,7 @@ type GameState = {
 }
 
 type PendingEffect =
-  | { type: 'select_target'; action: string; sourceZone: string; sourceIndex: number; message: string; sourceName?: string }
+  | { type: 'select_target'; action: string; sourceZone: string; sourceIndex: number; message: string; sourceName?: string; activatedBy: 'my' | 'opp' }
   | { type: 'coin_toss'; graveIndex: number; owner: 'my' | 'opp' }
   | { type: 'confirm'; message: string; onConfirm: string }
 
@@ -149,6 +149,19 @@ function setZoneArr(g: GameState, zone: string, arr: (FieldCard | null)[]) {
   else if (zone === 'oppSpellZone') g.oppSpellZone = arr
 }
 
+// 悪夢の大噴火：自分側の魔法・罠ゾーンのカードは実データで墓地へ送り、
+// 相手側は墓地処理を相手クライアント側に委ねるため null にするだけにする
+// （オンラインでは相手のセットカードの実データを自分のクライアントは知らないため）
+function applyAkumuDestruction(g: GameState) {
+  for (let idx = 0; idx < 5; idx++) {
+    if (g.mySpellZone[idx]) {
+      g.myGrave.push({ data: g.mySpellZone[idx]!.data, isAwake: false })
+    }
+  }
+  g.mySpellZone = g.mySpellZone.map(() => null)
+  g.oppSpellZone = g.oppSpellZone.map(() => null)
+}
+
 function addMagicCounters(g: GameState) {
   for (const z of ['myFront', 'myBack', 'oppFront', 'oppBack']) {
     const arr = [...getZoneArr(g, z)]
@@ -219,7 +232,10 @@ function flipGameState(g: GameState): GameState {
     myGrave: g.oppGrave, oppGrave: g.myGrave,
     turn: g.turn === 'my' ? 'opp' : 'my',
     phase: g.phase, normalSummonDone: g.normalSummonDone, awakeDone: g.awakeDone,
-    log: g.log, selectedCard: null, pendingEffect: g.pendingEffect,
+    log: g.log, selectedCard: null,
+    pendingEffect: g.pendingEffect?.type === 'select_target'
+      ? { ...g.pendingEffect, activatedBy: g.pendingEffect.activatedBy === 'my' ? 'opp' as const : 'my' as const }
+      : g.pendingEffect,
     bannedCards: g.bannedCards,
     endPhaseDestroyUids: g.endPhaseDestroyUids.map(x => ({ uid: x.uid, owner: x.owner === 'my' ? 'opp' as const : 'my' as const, dueAtOwner: x.dueAtOwner === 'my' ? 'opp' as const : 'my' as const })),
     kumomaru_atkDown: g.kumomaru_atkDown.map(x => ({ uid: x.uid, owner: x.owner === 'my' ? 'opp' as const : 'my' as const })),
@@ -763,19 +779,7 @@ export default function BattlePage() {
     if (onlineModeRef.current && owner === 'my' && !REACTIVE_IDS.includes(card.id)) {
       const countered = await checkOnlineTrap(card.name)
       if (countered) {
-        const akumuSlot = g.oppSpellZone.findIndex(fc2 => fc2?.data.id === 'trap_akumu_daihunka_01')
-        if (akumuSlot !== -1) {
-          const akumuCard = g.oppSpellZone[akumuSlot]!
-          const arr2 = [...g.oppSpellZone]; arr2[akumuSlot] = null; g.oppSpellZone = arr2
-          g.oppGrave.push({ data: akumuCard.data, isAwake: false })
-          const newMyZ = [...g.mySpellZone]
-          const newOppZ = [...g.oppSpellZone]
-          for (let idx2 = 0; idx2 < 5; idx2++) {
-            if (newMyZ[idx2]) { g.myGrave.push({ data: newMyZ[idx2]!.data, isAwake: false }); newMyZ[idx2] = null }
-            if (newOppZ[idx2]) { g.oppGrave.push({ data: newOppZ[idx2]!.data, isAwake: false }); newOppZ[idx2] = null }
-          }
-          g.mySpellZone = newMyZ; g.oppSpellZone = newOppZ
-        }
+        applyAkumuDestruction(g)
         addLog(g, `「悪夢の大噴火」発動！「${card.name}」を無効化・全魔法罠ゾーン破壊`)
         addMagicCounters(g)
         setGame({ ...g })
@@ -819,7 +823,7 @@ export default function BattlePage() {
         break
       }
       case 'spell_mizou_daisaigai_01': {
-        g.pendingEffect = { type: 'select_target', action: 'awake_then_destroy_next', sourceZone: zone, sourceIndex: index, message: '覚醒させるモンスターを選択', sourceName: card.name }
+        g.pendingEffect = { type: 'select_target', action: 'awake_then_destroy_next', sourceZone: zone, sourceIndex: index, message: '覚醒させるモンスターを選択', sourceName: card.name, activatedBy: owner }
         break
       }
       case 'trap_kuromajutu_bousou_01': {
@@ -843,7 +847,7 @@ export default function BattlePage() {
         break
       }
       case 'spell_seiryu_manako_01': {
-        g.pendingEffect = { type: 'select_target', action: 'return_to_sealed', sourceZone: zone, sourceIndex: index, message: '封印に戻すモンスターを選択', sourceName: card.name }
+        g.pendingEffect = { type: 'select_target', action: 'return_to_sealed', sourceZone: zone, sourceIndex: index, message: '封印に戻すモンスターを選択', sourceName: card.name, activatedBy: owner }
         break
       }
       case 'spell_dragon_01': {
@@ -933,7 +937,7 @@ export default function BattlePage() {
         zoneArr[index] = fc; setZoneArr(g, zone, zoneArr); grave.pop(); return
       }
       case 'trap_singari_01': {
-        g.pendingEffect = { type: 'select_target', action: 'singari', sourceZone: zone, sourceIndex: index, message: 'しんがりを受けるモンスターを選択' }
+        g.pendingEffect = { type: 'select_target', action: 'singari', sourceZone: zone, sourceIndex: index, message: 'しんがりを受けるモンスターを選択', activatedBy: owner }
         break
       }
     }
@@ -973,7 +977,7 @@ export default function BattlePage() {
       addLog(g, '癒しの洞窟の姫：フィールドのATK/DEF低下を全て回復')
     }
     if (card.data.id === 'monster_twin_cats_01') {
-      g.pendingEffect = { type: 'select_target', action: 'lock_attack', sourceZone: isMyTurn ? 'myFront' : 'oppFront', sourceIndex: emptyFront, message: '攻撃を封じる相手モンスターを選択' }
+      g.pendingEffect = { type: 'select_target', action: 'lock_attack', sourceZone: isMyTurn ? 'myFront' : 'oppFront', sourceIndex: emptyFront, message: '攻撃を封じる相手モンスターを選択', activatedBy: isMyTurn ? 'my' : 'opp' }
       setCatSelectModalOpen(true)
     }
     if (card.data.id === 'monster_witch_01') {
@@ -2382,7 +2386,8 @@ export default function BattlePage() {
   const selCardData = selCard && !('data' in selCard) ? selCard as CardData : null
   const selCardIsMonster = selCardData?.type === 'monster'
   const selCardIsSpell = selCardData && (selCardData.type === 'spell' || selCardData.type === 'trap')
-  const isPendingTarget = game.pendingEffect?.type === 'select_target'
+  const isPendingTarget = game.pendingEffect?.type === 'select_target' &&
+    (!onlineModeRef.current || game.pendingEffect.activatedBy === 'my')
 
   const renderFieldCard = (fc: FieldCard | null, zone: string, index: number, borderColor: string) => {
     const isSel = sel?.zone === zone && sel?.index === index
@@ -2473,7 +2478,7 @@ export default function BattlePage() {
         return
       }
       if (isPendingTarget) return
-      if (fc && (game.phase === 'main' || game.phase === 'battle' || game.phase === 'main2')) { activateSpell(zone as 'mySpellZone' | 'oppSpellZone', index); return }
+      if (fc && zone === 'mySpellZone' && (game.phase === 'main' || game.phase === 'battle' || game.phase === 'main2')) { activateSpell(zone as 'mySpellZone' | 'oppSpellZone', index); return }
       if (!fc && selIsHand && selCardIsSpell) { setSpellCard(zone as 'mySpellZone' | 'oppSpellZone', index); return }
       if (fc) selectCard(zone, index)
     }
@@ -2771,7 +2776,15 @@ export default function BattlePage() {
             <div style={{ color: '#ccc', fontSize: 12, marginBottom: 20 }}>発動しますか？</div>
             <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
               <button style={{ background: '#e8c876', color: '#0f0f0f', border: 'none', borderRadius: 6, padding: '8px 24px', fontSize: 13, fontWeight: 'bold', cursor: 'pointer' }}
-                onClick={() => { setOnlineTrapCheckPrompt(null); channelRef.current?.send({ type: 'broadcast', event: 'trap_response', payload: { activated: true } }) }}>
+                onClick={() => {
+                  channelRef.current?.send({ type: 'broadcast', event: 'trap_response', payload: { activated: true } })
+                  const g = { ...gameRef.current! }
+                  applyAkumuDestruction(g)
+                  addLog(g, `「悪夢の大噴火」発動！「${onlineTrapCheckPrompt.triggeredBy}」を無効化・全魔法罠ゾーン破壊`)
+                  addMagicCounters(g)
+                  setGame({ ...g })
+                  setOnlineTrapCheckPrompt(null)
+                }}>
                 発動する
               </button>
               <button style={{ background: '#333', color: '#aaa', border: '1px solid #555', borderRadius: 6, padding: '8px 24px', fontSize: 13, cursor: 'pointer' }}
